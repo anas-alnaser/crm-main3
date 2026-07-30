@@ -7,7 +7,7 @@ import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { apiRequest, createEntity, fetchList, patchEntity, updateEntity } from "../api/client";
+import { apiRequest, createEntity, fetchList, updateEntity } from "../api/client";
 import type { Activity, Client, Deal, Meeting, Stage, Task, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";

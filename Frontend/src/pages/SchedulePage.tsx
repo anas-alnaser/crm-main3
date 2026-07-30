@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
-import { apiRequest, createEntity, deleteEntity, fetchList, patchEntity, updateEntity } from "../api/client";
+import { createEntity, deleteEntity, fetchList, patchEntity, updateEntity } from "../api/client";
 import type { Client, Deal, Meeting, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";

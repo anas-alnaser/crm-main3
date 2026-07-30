@@ -1,6 +1,5 @@
 from crm.apitestbase import APITestBase
 from clients.models import Client
-from sales.models import Deal
 
 
 class HealthTests(APITestBase):

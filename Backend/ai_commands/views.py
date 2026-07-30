@@ -17,7 +17,7 @@ from activities.models import Activity
 from clients.models import Client
 from crm.throttling import AICommandThrottle
 from meetings.models import Meeting
-from sales.models import Deal, Pipeline, Stage
+from sales.models import Deal, Stage
 from tasks.models import Task
 from .models import AICommandConfirmation, AICommandLog
 from .services import AICommandError, MissingAIKeyError, interpret_command

@@ -171,3 +171,54 @@ UNFOLD = {
     "SITE_TITLE": "Fueldezign CRM",
     "SITE_HEADER": "Fueldezign CRM",
 }
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in env("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+# --- Security hardening ---
+# Dev keeps convenient defaults; production (DEBUG=False) must supply real
+# secrets and turns on transport security. HSTS/SSL redirect are never enabled
+# in development.
+INSECURE_SECRET_KEYS = {"dev-only-secret-key-change-me", "change-me"}
+
+if not DEBUG:
+    if SECRET_KEY in INSECURE_SECRET_KEYS:
+        raise RuntimeError(
+            "DJANGO_SECRET_KEY must be set to a strong, unique value when DJANGO_DEBUG=False."
+        )
+    if not ALLOWED_HOSTS:
+        raise RuntimeError("DJANGO_ALLOWED_HOSTS must be set when DJANGO_DEBUG=False.")
+
+    SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "True").lower() == "true"
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(env("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    # When running behind a TLS-terminating proxy (nginx, load balancer).
+    if env("USE_X_FORWARDED_PROTO", "True").lower() == "true":
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "standard"},
+    },
+    "root": {"handlers": ["console"], "level": env("LOG_LEVEL", "INFO")},
+    "loggers": {
+        # Provider/interpretation detail is logged here, never returned to clients.
+        "ai_commands": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}

@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["migrations", ".venv"]
+
+[tool.ruff.lint]
+# Pyflakes (F) catches real defects (undefined names, unused imports); a subset
+# of pycodestyle (E) catches syntax-level issues. Line length is handled by the
+# formatter, not enforced as a lint error.
+select = ["E", "F", "W"]
+ignore = ["E501", "E741"]
+
+[tool.coverage.run]
+source = ["accounts", "activities", "ai_commands", "clients", "crm", "meetings", "projects", "sales", "tasks"]
+omit = ["*/migrations/*", "*/tests.py", "*/apitestbase.py", "manage.py", "*/wsgi.py", "*/asgi.py"]
+
+[tool.coverage.report]
+show_missing = true

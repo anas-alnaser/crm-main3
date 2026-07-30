@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.utils import timezone
 
 from crm.apitestbase import APITestBase
-from sales.models import Deal, Pipeline, SalesSettings, Stage
+from sales.models import Deal, SalesSettings, Stage
 
 
 class DealPermissionTests(APITestBase):

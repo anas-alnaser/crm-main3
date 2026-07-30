@@ -14,7 +14,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiRequest, createEntity, deleteEntity, fetchList, updateEntity } from "../api/client";
+import { createEntity, deleteEntity, fetchList, updateEntity } from "../api/client";
 import type { Client, Deal, Stage, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";
