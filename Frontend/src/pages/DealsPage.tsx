@@ -14,7 +14,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiRequest, createEntity, deleteEntity, updateEntity } from "../api/client";
+import { apiRequest, createEntity, deleteEntity, fetchList, updateEntity } from "../api/client";
 import type { Client, Deal, Stage, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";
@@ -153,13 +153,13 @@ export function DealsPage() {
 
   const { data: deals = [], isLoading, isError } = useQuery({
     queryKey: ["deals", mineMode],
-    queryFn: () => apiRequest<Deal[]>(mineMode ? "/deals/?mine=true" : "/deals/"),
+    queryFn: () => fetchList<Deal>(mineMode ? "/deals/?mine=true" : "/deals/"),
   });
   const { data: clients = [] } = useCrud<Client>("clients");
   const { data: stages = [] } = useCrud<Stage>("stages");
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
-    queryFn: () => apiRequest<User[]>("/users/"),
+    queryFn: () => fetchList<User>("/users/"),
     enabled: isAdmin,
   });
   const ownerOptions = isAdmin ? users : currentUser ? [currentUser] : [];

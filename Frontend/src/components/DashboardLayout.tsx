@@ -31,7 +31,7 @@ import { Input } from "./ui/input";
 import { Badge, statusTone } from "./ui/badge";
 import { Skeleton } from "./ui/skeleton";
 import { apiRequest } from "../api/client";
-import type { Activity, Client, Deal, Meeting, Task } from "../api/types";
+import type { GlobalSearchResponse, SearchResults } from "../api/types";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
@@ -214,31 +214,14 @@ export function DashboardLayout() {
   );
 }
 
-type WorkspaceSearchResults = {
-  activities: Activity[];
-  clients: Client[];
-  deals: Deal[];
-  meetings: Meeting[];
-  tasks: Task[];
-};
+type WorkspaceSearchResults = SearchResults;
 
+// One authenticated, role-masked endpoint instead of five unbounded fan-out
+// requests. The backend scopes results to what the user may read and masks
+// restricted values (e.g. deal amounts owned by others).
 async function searchWorkspace(query: string): Promise<WorkspaceSearchResults> {
-  const search = encodeURIComponent(query);
-  const [clients, deals, tasks, meetings, activities] = await Promise.all([
-    apiRequest<Client[]>(`/clients/?search=${search}&ordering=-updated_at`),
-    apiRequest<Deal[]>(`/deals/?search=${search}&ordering=-updated_at`),
-    apiRequest<Task[]>(`/tasks/?search=${search}&ordering=-created_at`),
-    apiRequest<Meeting[]>(`/meetings/?search=${search}&ordering=start_datetime`),
-    apiRequest<Activity[]>(`/activities/?search=${search}&ordering=-created_at`),
-  ]);
-
-  return {
-    clients: clients.slice(0, 5),
-    deals: deals.slice(0, 5),
-    meetings: meetings.slice(0, 4),
-    tasks: tasks.slice(0, 4),
-    activities: activities.slice(0, 4),
-  };
+  const response = await apiRequest<GlobalSearchResponse>(`/search/?q=${encodeURIComponent(query)}`);
+  return response.results;
 }
 
 function WorkspaceSearchPanel({

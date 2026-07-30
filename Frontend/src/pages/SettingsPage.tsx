@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { apiRequest } from "../api/client";
+import { apiRequest, fetchList } from "../api/client";
 import type { CommissionSummary, Pipeline, Stage } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
@@ -17,11 +17,11 @@ export function SettingsPage() {
   const [commissionRate, setCommissionRate] = useState("");
   const { data: pipelines = [] } = useQuery({
     queryKey: ["pipelines"],
-    queryFn: () => apiRequest<Pipeline[]>("/pipelines/"),
+    queryFn: () => fetchList<Pipeline>("/pipelines/"),
   });
   const { data: stages = [], isLoading } = useQuery({
     queryKey: ["stages"],
-    queryFn: () => apiRequest<Stage[]>("/stages/?ordering=order"),
+    queryFn: () => fetchList<Stage>("/stages/?ordering=order"),
   });
   const { data: commission } = useQuery({
     queryKey: ["commission"],

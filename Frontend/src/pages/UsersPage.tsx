@@ -11,7 +11,7 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiRequest, createEntity, patchEntity } from "../api/client";
+import { apiRequest, createEntity, fetchList, patchEntity } from "../api/client";
 import type { User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge } from "../components/ui/badge";
@@ -45,7 +45,7 @@ export function UsersPage() {
 
   const { data: users = [], isLoading, isError } = useQuery({
     queryKey: ["users"],
-    queryFn: () => apiRequest<User[]>("/users/"),
+    queryFn: () => fetchList<User>("/users/"),
   });
 
   const form = useForm<UserFormValues>({

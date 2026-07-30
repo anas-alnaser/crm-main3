@@ -7,7 +7,7 @@ import { z } from "zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { apiRequest, createEntity, patchEntity, updateEntity } from "../api/client";
+import { apiRequest, createEntity, fetchList, patchEntity, updateEntity } from "../api/client";
 import type { Activity, Client, Deal, Meeting, Stage, Task, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";
@@ -303,32 +303,32 @@ export function PipelinePage() {
 
   const { data: stages = [], isLoading: stagesLoading } = useQuery({
     queryKey: ["stages"],
-    queryFn: () => apiRequest<Stage[]>("/stages/?ordering=order"),
+    queryFn: () => fetchList<Stage>("/stages/?ordering=order"),
   });
   const { data: deals = [], isLoading: dealsLoading } = useQuery({
     queryKey: dealsQueryKey,
-    queryFn: () => apiRequest<Deal[]>(mineMode ? "/deals/?mine=true" : "/deals/"),
+    queryFn: () => fetchList<Deal>(mineMode ? "/deals/?mine=true" : "/deals/"),
   });
   const { data: clients = [] } = useQuery({
     queryKey: ["clients"],
-    queryFn: () => apiRequest<Client[]>("/clients/"),
+    queryFn: () => fetchList<Client>("/clients/"),
   });
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
-    queryFn: () => apiRequest<User[]>("/users/"),
+    queryFn: () => fetchList<User>("/users/"),
     enabled: isAdmin,
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ["tasks"],
-    queryFn: () => apiRequest<Task[]>("/tasks/"),
+    queryFn: () => fetchList<Task>("/tasks/"),
   });
   const { data: activities = [] } = useQuery({
     queryKey: ["activities"],
-    queryFn: () => apiRequest<Activity[]>("/activities/"),
+    queryFn: () => fetchList<Activity>("/activities/"),
   });
   const { data: selectedDealMeetings = [], isLoading: selectedDealMeetingsLoading } = useQuery({
     queryKey: ["meetings", "deal", selectedDeal?.id],
-    queryFn: () => apiRequest<Meeting[]>(`/meetings/?deal=${selectedDeal?.id}&ordering=start_datetime`),
+    queryFn: () => fetchList<Meeting>(`/meetings/?deal=${selectedDeal?.id}&ordering=start_datetime`),
     enabled: Boolean(selectedDeal),
   });
 

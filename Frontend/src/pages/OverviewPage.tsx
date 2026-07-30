@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity as ActivityIcon, ArrowRight, CalendarClock, CircleDollarSign, Gauge, Trophy, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 
-import { apiRequest } from "../api/client";
+import { apiRequest, fetchList } from "../api/client";
 import type { Activity, CommissionSummary, DashboardStats, Deal, Meeting } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { EmptyState } from "../components/ui/empty-state";
@@ -23,11 +23,11 @@ export function OverviewPage() {
   });
   const { data: deals = [] } = useQuery({
     queryKey: ["deals", user?.role === "sales" ? "mine" : "all"],
-    queryFn: () => apiRequest<Deal[]>(user?.role === "sales" ? "/deals/?mine=true" : "/deals/"),
+    queryFn: () => fetchList<Deal>(user?.role === "sales" ? "/deals/?mine=true" : "/deals/"),
   });
   const { data: activities = [] } = useQuery({
     queryKey: ["activities"],
-    queryFn: () => apiRequest<Activity[]>("/activities/"),
+    queryFn: () => fetchList<Activity>("/activities/"),
   });
   const { data: commission, isLoading: commissionLoading } = useQuery({
     queryKey: ["commission"],
@@ -35,7 +35,7 @@ export function OverviewPage() {
   });
   const { data: upcomingMeetings = [] } = useQuery({
     queryKey: ["meetings", "upcoming"],
-    queryFn: () => apiRequest<Meeting[]>("/meetings/upcoming/"),
+    queryFn: () => fetchList<Meeting>("/meetings/upcoming/"),
   });
 
   const closingSoon = deals

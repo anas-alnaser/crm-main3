@@ -6,7 +6,7 @@ import { useForm } from "react-hook-form";
 import { useSearchParams } from "react-router-dom";
 import { z } from "zod";
 
-import { apiRequest, createEntity, deleteEntity, patchEntity, updateEntity } from "../api/client";
+import { apiRequest, createEntity, deleteEntity, fetchList, patchEntity, updateEntity } from "../api/client";
 import type { Client, Deal, Meeting, User } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";
@@ -99,21 +99,21 @@ export function SchedulePage() {
   const meetingsQuery = useQuery({
     queryKey: ["meetings", activeScope, rangeStart.toISOString(), rangeEnd.toISOString()],
     queryFn: () =>
-      apiRequest<Meeting[]>(
+      fetchList<Meeting>(
         `/meetings/?scope=${activeScope}&from=${encodeURIComponent(rangeStart.toISOString())}&to=${encodeURIComponent(rangeEnd.toISOString())}&ordering=start_datetime`,
       ),
   });
   const { data: clients = [] } = useQuery({
     queryKey: ["clients"],
-    queryFn: () => apiRequest<Client[]>("/clients/"),
+    queryFn: () => fetchList<Client>("/clients/"),
   });
   const { data: deals = [] } = useQuery({
     queryKey: ["deals", isAdmin ? "all" : "visible"],
-    queryFn: () => apiRequest<Deal[]>("/deals/"),
+    queryFn: () => fetchList<Deal>("/deals/"),
   });
   const { data: users = [] } = useQuery({
     queryKey: ["users"],
-    queryFn: () => apiRequest<User[]>("/users/"),
+    queryFn: () => fetchList<User>("/users/"),
     enabled: isAdmin,
   });
 

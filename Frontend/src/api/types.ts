@@ -164,22 +164,65 @@ export type LeaderboardResponse = {
   results: LeaderboardRow[];
 };
 
-export type AICommandIntent = "create_meeting" | "move_deal";
+export type AICommandTier = "auto" | "confirm" | "blocked" | "unknown";
 
 export type AICommandDraft = {
-  intent: AICommandIntent | string | null;
+  intent: string | null;
   fields: Record<string, unknown>;
   confidence: number;
   missing: string[];
 };
 
-export type AICommandResponse = {
-  acted: boolean;
-  intent?: AICommandIntent;
-  summary?: string;
-  deal_id?: number;
-  stage_id?: number;
-  meeting_id?: number;
-  draft?: AICommandDraft;
-  missing?: string[];
+export type AICommandOption = { id: number; label: string };
+
+export type AICommandPreview = {
+  record?: string;
+  field?: string;
+  old?: string;
+  new?: string;
+  changes?: Record<string, { old: string; new: string }>;
 };
+
+/** Full contract returned by POST /api/ai/command/ and the confirm endpoint. */
+export type AICommandResponse = {
+  intent?: string | null;
+  tier?: AICommandTier;
+  acted?: boolean;
+  blocked?: boolean;
+  refusal?: string;
+  summary?: string;
+  reason?: string;
+  requires_confirmation?: boolean;
+  requires_disambiguation?: boolean;
+  needs_review?: boolean;
+  missing?: string[];
+  options?: Record<string, AICommandOption[]>;
+  preview?: AICommandPreview;
+  draft?: AICommandDraft;
+  understood?: { intent: string | null; fields: Record<string, unknown>; confidence: number; missing: string[] };
+  undoable?: boolean;
+  action_id?: number;
+  changes?: Record<string, { old: string; new: string }>;
+  confirmation_id?: string;
+  confirmation_expires_at?: string;
+  // Error envelope
+  detail?: string;
+  code?: string;
+  error?: string;
+};
+
+export type AICommandUndoResponse = {
+  undone: boolean;
+  action_id: number;
+  summary: string;
+};
+
+export type SearchResults = {
+  clients: Array<{ id: number; name: string; contact_person?: string; email?: string; phone?: string; status: string }>;
+  deals: Array<{ id: number; title: string; company_name: string | null; contact_person?: string; owner_username: string | null; status: string; value: string | null }>;
+  tasks: Array<{ id: number; title: string; status: string; due_date: string | null; client_name: string | null; deal_title: string | null }>;
+  meetings: Array<{ id: number; title: string; status: string; start_datetime: string; company_name: string | null; deal_title: string | null }>;
+  activities: Array<{ id: number; type: string; content: string; created_at: string; client_name: string | null; deal_title: string | null }>;
+};
+
+export type GlobalSearchResponse = { query: string; results: SearchResults };
