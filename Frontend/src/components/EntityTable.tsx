@@ -10,10 +10,26 @@ type EntityTableProps<T extends { id: number }> = {
   columns: ColumnDef<T>[];
   data: T[];
   onEdit: (row: T) => void;
-  onDelete: (id: number) => void;
+  onDelete?: (id: number) => void;
+  /** Gate the Edit action per row (default: always allowed). */
+  canModify?: (row: T) => boolean;
+  /** Gate the destructive action per row (default: same as canModify). */
+  canDelete?: (row: T) => boolean;
+  destructiveLabel?: string;
+  confirmText?: string;
 };
 
-export function EntityTable<T extends { id: number }>({ columns, data, onEdit, onDelete }: EntityTableProps<T>) {
+export function EntityTable<T extends { id: number }>({
+  columns,
+  data,
+  onEdit,
+  onDelete,
+  canModify = () => true,
+  canDelete,
+  destructiveLabel = "Delete",
+  confirmText = "Delete this record?",
+}: EntityTableProps<T>) {
+  const canRemove = canDelete ?? canModify;
   const table = useReactTable({
     data,
     columns: [
@@ -23,22 +39,25 @@ export function EntityTable<T extends { id: number }>({ columns, data, onEdit, o
         header: "",
         cell: ({ row }) => (
           <div className="flex min-w-max justify-end gap-2">
-            <Button variant="outline" className="h-8 px-3" onClick={() => onEdit(row.original)}>
+            <Button variant="outline" className="h-8 px-3" disabled={!canModify(row.original)} onClick={() => onEdit(row.original)}>
               <Pencil className="h-3.5 w-3.5" />
               Edit
             </Button>
-            <Button
-              variant="danger"
-              className="h-8 px-3"
-              onClick={() => {
-                if (window.confirm("Delete this record?")) {
-                  onDelete(row.original.id);
-                }
-              }}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Delete
-            </Button>
+            {onDelete && (
+              <Button
+                variant="danger"
+                className="h-8 px-3"
+                disabled={!canRemove(row.original)}
+                onClick={() => {
+                  if (window.confirm(confirmText)) {
+                    onDelete(row.original.id);
+                  }
+                }}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {destructiveLabel}
+              </Button>
+            )}
           </div>
         ),
       },

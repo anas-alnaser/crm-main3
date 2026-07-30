@@ -13,6 +13,7 @@ import { MotionSection, pageMotion } from "../components/ui/motion";
 import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
+import { useAuth } from "../lib/auth";
 import { useCrud } from "../hooks/useCrud";
 import type { Client, Project } from "../api/types";
 
@@ -51,9 +52,12 @@ const columns: ColumnDef<Project>[] = [
 ];
 
 export function ProjectsPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [editing, setEditing] = useState<Project | null>(null);
   const { data = [], isLoading, createMutation, updateMutation, deleteMutation } = useCrud<Project>("projects");
   const { data: clients = [] } = useCrud<Client>("clients");
+  const canModify = (project: Project) => isAdmin || project.created_by === user?.id;
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues });
 
   const submit = form.handleSubmit(async (values) => {
@@ -107,7 +111,7 @@ export function ProjectsPage() {
             </div>
           </div>
         </form>
-        <div className="min-w-0">{isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={data} onEdit={edit} onDelete={deleteMutation.mutate} />}</div>
+        <div className="min-w-0">{isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={data} onEdit={edit} onDelete={deleteMutation.mutate} canModify={canModify} />}</div>
       </div>
     </MotionSection>
   );

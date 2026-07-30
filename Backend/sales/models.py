@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 from clients.models import Client
 
@@ -47,6 +48,10 @@ class Deal(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="deals", on_delete=models.PROTECT)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.OPEN)
     expected_close_date = models.DateField(null=True, blank=True)
+    # Set when a deal transitions into a won/lost stage; cleared when reopened.
+    # Metrics (won-this-month, win rate, leaderboard periods) use this instead
+    # of the generic updated_at so unrelated edits don't move a deal's period.
+    closed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -62,6 +67,19 @@ class Deal(models.Model):
                 self.status = self.Status.LOST
             else:
                 self.status = self.Status.OPEN
+
+        closed = self.status in (self.Status.WON, self.Status.LOST)
+        new_closed_at = self.closed_at
+        if closed and self.closed_at is None:
+            new_closed_at = timezone.now()
+        elif not closed:
+            new_closed_at = None
+        if new_closed_at != self.closed_at:
+            self.closed_at = new_closed_at
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"closed_at", "status"}
+
         super().save(*args, **kwargs)
 
     def __str__(self):

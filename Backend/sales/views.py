@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.db.models import DecimalField, Sum, Value
+from django.db.models import DecimalField, ProtectedError, Sum, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -33,20 +33,37 @@ def commission_for(value, rate):
     return (value * rate) / Decimal("100")
 
 
-class PipelineViewSet(ModelViewSet):
+class ProtectedDeleteMixin:
+    protected_detail = "This record is still referenced and cannot be deleted."
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        try:
+            instance.delete()
+        except ProtectedError:
+            return Response(
+                {"detail": self.protected_detail, "code": "protected"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PipelineViewSet(ProtectedDeleteMixin, ModelViewSet):
     queryset = Pipeline.objects.all()
     serializer_class = PipelineSerializer
     permission_classes = [IsAdminOrReadOnly]
+    protected_detail = "This pipeline still has deals and cannot be deleted."
     filterset_fields = ["is_default"]
     search_fields = ["name"]
     ordering_fields = ["name", "is_default", "id"]
     ordering = ["name"]
 
 
-class StageViewSet(ModelViewSet):
+class StageViewSet(ProtectedDeleteMixin, ModelViewSet):
     queryset = Stage.objects.select_related("pipeline")
     serializer_class = StageSerializer
     permission_classes = [IsAdminOrReadOnly]
+    protected_detail = "This stage still has deals and cannot be deleted."
     filterset_fields = ["pipeline", "is_won", "is_lost"]
     search_fields = ["name", "pipeline__name"]
     ordering_fields = ["pipeline", "order", "name", "id"]
@@ -69,8 +86,17 @@ class DealViewSet(ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        # Sales users always own the deals they create; only admins may assign
+        # an owner. Enforced server-side, not just in the UI.
         owner = serializer.validated_data.get("owner") if self.request.user.is_admin_role else self.request.user
         serializer.save(owner=owner or self.request.user)
+
+    def perform_update(self, serializer):
+        # Non-admins cannot reassign ownership of a deal, even via direct API.
+        if self.request.user.is_admin_role:
+            serializer.save()
+        else:
+            serializer.save(owner=serializer.instance.owner)
 
     @action(detail=True, methods=["patch"], url_path="move")
     def move(self, request, pk=None):
@@ -138,7 +164,7 @@ class LeaderboardView(APIView):
             open_deals = Deal.objects.filter(owner=rep, status=Deal.Status.OPEN)
             won_deals = Deal.objects.filter(owner=rep, status=Deal.Status.WON)
             if period == "this_month":
-                won_deals = won_deals.filter(updated_at__date__gte=month_start)
+                won_deals = won_deals.filter(closed_at__date__gte=month_start)
 
             open_value = deal_value_total(open_deals)
             won_value = deal_value_total(won_deals)

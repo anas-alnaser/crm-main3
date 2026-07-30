@@ -1,9 +1,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { apiRequest, fetchList } from "../api/client";
 import { EntityTable } from "../components/EntityTable";
 import { PageHeader } from "../components/PageHeader";
 import { Badge, statusTone } from "../components/ui/badge";
@@ -13,6 +15,8 @@ import { MotionSection, pageMotion } from "../components/ui/motion";
 import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
+import { useAuth } from "../lib/auth";
+import { useToast } from "../lib/toast";
 import { useCrud } from "../hooks/useCrud";
 import type { Client } from "../api/types";
 
@@ -41,6 +45,7 @@ const defaultValues: FormValues = {
 const columns: ColumnDef<Client>[] = [
   { accessorKey: "name", header: "Business" },
   { accessorKey: "contact_person", header: "Contact" },
+  { accessorKey: "created_by_username", header: "Owner", cell: ({ row }) => row.original.created_by_username || "—" },
   {
     accessorKey: "status",
     header: "Status",
@@ -49,9 +54,37 @@ const columns: ColumnDef<Client>[] = [
 ];
 
 export function ClientsPage() {
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const isAdmin = user?.role === "admin";
   const [editing, setEditing] = useState<Client | null>(null);
-  const { data = [], isLoading, createMutation, updateMutation, deleteMutation } = useCrud<Client>("clients");
+  const [showArchived, setShowArchived] = useState(false);
+  const { data = [], isLoading, createMutation, updateMutation } = useCrud<Client>("clients");
+  const archivedQuery = useQuery({
+    queryKey: ["clients", "archived"],
+    queryFn: () => fetchList<Client>("/clients/?archived=true"),
+    enabled: showArchived,
+  });
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues });
+
+  const archiveMutation = useMutation({
+    mutationFn: (id: number) => apiRequest<Client>(`/clients/${id}/archive/`, { method: "PATCH" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      showToast("Company archived. Its deals and projects are preserved.", "success");
+    },
+    onError: () => showToast("Could not archive company.", "error"),
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (id: number) => apiRequest<Client>(`/clients/${id}/restore/`, { method: "PATCH" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["clients"] });
+      showToast("Company restored.", "success");
+    },
+    onError: () => showToast("Could not restore company.", "error"),
+  });
 
   const submit = form.handleSubmit(async (values) => {
     if (editing) {
@@ -68,9 +101,21 @@ export function ClientsPage() {
     form.reset(client);
   };
 
+  const canModify = (client: Client) => isAdmin || client.created_by === user?.id;
+  const rows = showArchived ? archivedQuery.data ?? [] : data;
+  const loading = showArchived ? archivedQuery.isLoading : isLoading;
+
   return (
     <MotionSection className="page-shell" {...pageMotion}>
-      <PageHeader title="Companies" subtitle="Manage agency relationships, decision makers, and contact details." />
+      <PageHeader
+        title="Companies"
+        subtitle="Manage agency relationships, decision makers, and contact details."
+        actions={
+          <Button type="button" variant="outline" onClick={() => setShowArchived((value) => !value)}>
+            {showArchived ? "Show active" : "Show archived"}
+          </Button>
+        }
+      />
       <div className="grid gap-6 xl:grid-cols-[400px_1fr]">
         <form onSubmit={submit} className="form-panel">
           <h3 className="mb-1 text-lg font-semibold">{editing ? "Edit company" : "Create company"}</h3>
@@ -95,7 +140,33 @@ export function ClientsPage() {
             </div>
           </div>
         </form>
-        <div className="min-w-0">{isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={data} onEdit={edit} onDelete={deleteMutation.mutate} />}</div>
+        <div className="min-w-0">
+          {loading ? (
+            <TableSkeleton />
+          ) : showArchived ? (
+            <EntityTable
+              columns={columns}
+              data={rows}
+              onEdit={edit}
+              onDelete={isAdmin ? (id) => restoreMutation.mutate(id) : undefined}
+              canModify={canModify}
+              canDelete={() => isAdmin}
+              destructiveLabel="Restore"
+              confirmText="Restore this company to the active list?"
+            />
+          ) : (
+            <EntityTable
+              columns={columns}
+              data={rows}
+              onEdit={edit}
+              onDelete={isAdmin ? (id) => archiveMutation.mutate(id) : undefined}
+              canModify={canModify}
+              canDelete={() => isAdmin}
+              destructiveLabel="Archive"
+              confirmText="Archive this company? Its deals and projects are preserved and it is hidden from active lists."
+            />
+          )}
+        </div>
       </div>
     </MotionSection>
   );

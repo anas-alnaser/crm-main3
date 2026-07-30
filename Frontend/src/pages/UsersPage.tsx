@@ -34,6 +34,14 @@ const userSchema = z.object({
 
 type UserFormValues = z.infer<typeof userSchema>;
 
+function readDetail(message: string): string {
+  try {
+    return (JSON.parse(message) as { detail?: string }).detail || "Could not deactivate user.";
+  } catch {
+    return "Could not deactivate user.";
+  }
+}
+
 function RoleBadge({ role }: { role: User["role"] }) {
   return <Badge tone={role === "admin" ? "accent" : "neutral"}>{role}</Badge>;
 }
@@ -86,7 +94,16 @@ export function UsersPage() {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       showToast("User deactivated.", "success");
     },
-    onError: () => showToast("Could not deactivate user.", "error"),
+    onError: (error) => showToast(error instanceof Error ? readDetail(error.message) : "Could not deactivate user.", "error"),
+  });
+
+  const reactivateUser = useMutation({
+    mutationFn: (id: number) => apiRequest<User>(`/users/${id}/reactivate/`, { method: "PATCH" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      showToast("User reactivated.", "success");
+    },
+    onError: () => showToast("Could not reactivate user.", "error"),
   });
 
   const columns = useMemo<ColumnDef<User>[]>(
@@ -132,22 +149,23 @@ export function UsersPage() {
       {
         id: "actions",
         header: "",
-        cell: ({ row }) => (
-          <div className="flex justify-end">
-            <Button
-              className="h-8 px-3"
-              disabled={!row.original.is_active}
-              type="button"
-              variant="outline"
-              onClick={() => deactivateUser.mutate(row.original.id)}
-            >
-              Deactivate
-            </Button>
-          </div>
-        ),
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <div className="flex justify-end">
+              <Button className="h-8 px-3" type="button" variant="outline" onClick={() => deactivateUser.mutate(row.original.id)}>
+                Deactivate
+              </Button>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <Button className="h-8 px-3" type="button" onClick={() => reactivateUser.mutate(row.original.id)}>
+                Reactivate
+              </Button>
+            </div>
+          ),
       },
     ],
-    [deactivateUser, updateRole],
+    [deactivateUser, reactivateUser, updateRole],
   );
 
   const table = useReactTable({

@@ -427,6 +427,7 @@ class AICommandExecutor:
             phone=fields.get("phone") or "",
             country=fields.get("country") or "",
             notes=fields.get("notes") or "",
+            created_by=self.user,
         )
         return self.success(draft, {"company_id": company.id, "summary": f"Created company '{company.name}'."}, create_action(company))
 
@@ -528,7 +529,7 @@ class AICommandExecutor:
             return build_review_response(draft, missing, TIER_AUTO, "The task needs review before it can be created.", options=options)
         if not execute:
             return build_confirmation_response(draft, [], TIER_AUTO, "Ready to create task.")
-        task = Task.objects.create(title=title, description=fields.get("notes") or fields.get("content") or "", client=client, deal=deal, due_date=due_date, status=status_value)
+        task = Task.objects.create(title=title, description=fields.get("notes") or fields.get("content") or "", client=client, deal=deal, due_date=due_date, status=status_value, created_by=self.user)
         return self.success(draft, {"task_id": task.id, "summary": f"Created task '{task.title}'."}, create_action(task))
 
     def handle_log_activity(self, draft, execute):
@@ -547,7 +548,7 @@ class AICommandExecutor:
             return build_review_response(draft, missing, TIER_AUTO, "The activity needs review before it can be logged.", options=options)
         if not execute:
             return build_confirmation_response(draft, [], TIER_AUTO, "Ready to log activity.")
-        activity = Activity.objects.create(type=activity_type, content=content, client=client, deal=deal)
+        activity = Activity.objects.create(type=activity_type, content=content, client=client, deal=deal, created_by=self.user)
         return self.success(draft, {"activity_id": activity.id, "summary": f"Logged {activity.get_type_display().lower()} activity."}, create_action(activity))
 
     def handle_add_note(self, draft, execute):

@@ -41,6 +41,7 @@ export type Deal = {
   owner_username?: string;
   status: "open" | "won" | "lost";
   expected_close_date: string | null;
+  closed_at: string | null;
   notes: string;
   commission: string | null;
   created_at: string;
@@ -56,6 +57,10 @@ export type Client = {
   country: string;
   status: "active" | "inactive";
   notes: string;
+  created_by: number | null;
+  created_by_username?: string;
+  is_archived: boolean;
+  archived_at: string | null;
   created_at: string;
 };
 
@@ -70,6 +75,8 @@ export type Project = {
   start_date: string | null;
   deadline: string | null;
   notes: string;
+  created_by: number | null;
+  created_by_username?: string;
   created_at: string;
 };
 
@@ -85,6 +92,8 @@ export type Task = {
   deal_title?: string;
   due_date: string | null;
   status: "todo" | "doing" | "done";
+  created_by: number | null;
+  created_by_username?: string;
   created_at: string;
 };
 
@@ -98,6 +107,8 @@ export type Activity = {
   deal_title?: string;
   project: number | null;
   project_title?: string;
+  created_by: number | null;
+  created_by_username?: string;
   created_at: string;
 };
 

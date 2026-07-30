@@ -169,7 +169,7 @@ class DashboardStatsView(APIView):
                 "scope": "company" if request.user.is_admin_role else "personal",
                 "total_open_deals": deals.filter(status=Deal.Status.OPEN).count(),
                 "total_pipeline_value": total_pipeline_value,
-                "deals_won_this_month": deals.filter(status=Deal.Status.WON, updated_at__date__gte=month_start).count(),
+                "deals_won_this_month": deals.filter(status=Deal.Status.WON, closed_at__date__gte=month_start).count(),
                 "win_rate": win_rate,
                 "value_by_stage": [
                     {

@@ -12,6 +12,7 @@ import { MotionSection, pageMotion } from "../components/ui/motion";
 import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
+import { useAuth } from "../lib/auth";
 import { useCrud } from "../hooks/useCrud";
 import type { Activity, Client, Deal, Project } from "../api/types";
 
@@ -43,6 +44,9 @@ const columns: ColumnDef<Activity>[] = [
 ];
 
 export function ActivitiesPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const canModify = (activity: Activity) => isAdmin || activity.created_by === user?.id;
   const [editing, setEditing] = useState<Activity | null>(null);
   const { data = [], isLoading, createMutation, updateMutation, deleteMutation } = useCrud<Activity>("activities");
   const { data: clients = [] } = useCrud<Client>("clients");
@@ -104,7 +108,7 @@ export function ActivitiesPage() {
             </div>
           </div>
         </form>
-        <div className="min-w-0">{isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={data} onEdit={edit} onDelete={deleteMutation.mutate} />}</div>
+        <div className="min-w-0">{isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={data} onEdit={edit} onDelete={deleteMutation.mutate} canModify={canModify} />}</div>
       </div>
     </MotionSection>
   );

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 from clients.models import Client
@@ -17,6 +18,13 @@ class Activity(models.Model):
     client = models.ForeignKey(Client, related_name="activities", on_delete=models.SET_NULL, null=True, blank=True)
     project = models.ForeignKey(Project, related_name="activities", on_delete=models.SET_NULL, null=True, blank=True)
     deal = models.ForeignKey(Deal, related_name="activities", on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="created_activities",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -14,6 +14,7 @@ import { MotionSection, pageMotion } from "../components/ui/motion";
 import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
+import { useAuth } from "../lib/auth";
 import { useCrud } from "../hooks/useCrud";
 import type { Client, Deal, Project, Task } from "../api/types";
 
@@ -167,6 +168,9 @@ function TaskCalendar({
 }
 
 export function TasksPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const canModify = (task: Task) => isAdmin || task.created_by === user?.id;
   const [editing, setEditing] = useState<Task | null>(null);
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -242,7 +246,7 @@ export function TasksPage() {
             selectedDate={selectedDate}
             tasks={data}
           />
-          {isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={visibleTasks} onEdit={edit} onDelete={deleteMutation.mutate} />}
+          {isLoading ? <TableSkeleton /> : <EntityTable columns={columns} data={visibleTasks} onEdit={edit} onDelete={deleteMutation.mutate} canModify={canModify} />}
         </div>
       </div>
     </MotionSection>
