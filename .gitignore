@@ -34,3 +34,11 @@ pnpm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Tooling artifacts
+repomix-output.xml
+htmlcov/
+.coverage
+coverage/
+playwright-report/
+test-results/

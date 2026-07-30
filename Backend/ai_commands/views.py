@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -12,14 +15,21 @@ from rest_framework.views import APIView
 from accounts.permissions import IsAdminRole
 from activities.models import Activity
 from clients.models import Client
+from crm.throttling import AICommandThrottle
 from meetings.models import Meeting
 from sales.models import Deal, Pipeline, Stage
 from tasks.models import Task
-from .models import AICommandLog
+from .models import AICommandConfirmation, AICommandLog
 from .services import AICommandError, MissingAIKeyError, interpret_command
 
 
+logger = logging.getLogger("ai_commands")
+
 CONFIDENCE_THRESHOLD = 0.75
+
+
+def confidence_threshold():
+    return getattr(settings, "AI_CONFIDENCE_THRESHOLD", CONFIDENCE_THRESHOLD)
 
 TIER_AUTO = AICommandLog.Tier.AUTO
 TIER_CONFIRM = AICommandLog.Tier.CONFIRM
@@ -60,12 +70,20 @@ SUPPORTED_INTENTS = AUTO_INTENTS | CONFIRM_INTENTS | BLOCKED_INTENTS
 
 
 class AICommandSerializer(serializers.Serializer):
-    text = serializers.CharField(max_length=2000)
+    text = serializers.CharField(trim_whitespace=True)
+
+    def validate_text(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Command text is required.")
+        max_length = getattr(settings, "AI_COMMAND_MAX_LENGTH", 2000)
+        if len(value) > max_length:
+            raise serializers.ValidationError(f"Command is too long (max {max_length} characters).")
+        return value
 
 
 class AICommandConfirmSerializer(serializers.Serializer):
-    draft = serializers.JSONField()
-    text = serializers.CharField(max_length=2000, required=False, allow_blank=True)
+    confirmation_id = serializers.UUIDField()
 
 
 class AICommandUndoSerializer(serializers.Serializer):
@@ -279,7 +297,25 @@ def build_review_response(draft, missing, tier, reason, preview=None, options=No
 
 
 def build_confirmation_response(draft, missing, tier, reason, preview=None):
-    return build_review_response(draft, missing, tier, reason, preview)
+    """A fully-resolved, server-validated Tier-2 action awaiting explicit confirmation.
+
+    No database mutation has happened. The view persists ``draft`` in an
+    ``AICommandConfirmation`` and returns only an opaque confirmation id.
+    """
+    return {
+        **response_base(draft, tier),
+        "acted": False,
+        "requires_confirmation": True,
+        "requires_disambiguation": False,
+        "needs_review": False,
+        "blocked": False,
+        "draft": draft,
+        "missing": [],
+        "options": {},
+        "reason": reason,
+        "summary": reason,
+        "preview": preview or {},
+    }
 
 
 def build_blocked_response(draft, reason):
@@ -687,10 +723,26 @@ class AICommandExecutor:
         return self.success(draft, {"task_id": task.id, "summary": f"Updated task '{task.title}'."}, update_action(task, action_changes), old_new)
 
 
-class AICommandView(APIView):
+class BaseAICommandView(APIView):
     permission_classes = [IsAdminRole]
+    throttle_classes = [AICommandThrottle]
+    throttle_scope = "ai"
 
+    def service_available(self):
+        return getattr(settings, "AI_COMMANDS_ENABLED", True)
+
+    def service_unavailable_response(self):
+        return Response(
+            {"detail": "AI command service is not available.", "code": "ai_unavailable"},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+
+class AICommandView(BaseAICommandView):
     def post(self, request):
+        if not self.service_available():
+            return self.service_unavailable_response()
+
         serializer = AICommandSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         raw_text = serializer.validated_data["text"]
@@ -699,15 +751,39 @@ class AICommandView(APIView):
         try:
             draft = interpret_command(raw_text, request.user)
         except MissingAIKeyError as exc:
-            log_data["summary"] = str(exc)
+            logger.warning("AI command service not configured: %s", exc)
+            log_data["summary"] = "AI command service is not configured."
             AICommandLog.objects.create(**log_data)
-            return Response({"detail": "AI command service is not configured."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return Response(
+                {"detail": "AI command service is not configured.", "code": "ai_unconfigured"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except (AICommandError, ValueError) as exc:
-            log_data["summary"] = str(exc)
+            # Log the provider detail server-side only; never leak it to the client.
+            logger.warning("AI provider/interpretation error: %s", exc)
+            log_data["summary"] = f"Provider error: {exc}"
             AICommandLog.objects.create(**log_data)
-            return Response({"detail": "Could not interpret command.", "error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {"detail": "Could not interpret the command. Please try again.", "code": "provider_error"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         response_payload = self.evaluate_draft(draft, request.user)
+
+        if response_payload.get("requires_confirmation"):
+            confirmation = AICommandConfirmation.objects.create(
+                user=request.user,
+                intent=draft.get("intent") or "",
+                tier=response_payload.get("tier", TIER_CONFIRM),
+                raw_text=raw_text,
+                draft=response_payload.get("draft", draft),
+                preview=response_payload.get("preview") or {},
+                summary=response_payload.get("summary") or response_payload.get("reason") or "",
+                expires_at=timezone.now() + timedelta(seconds=getattr(settings, "AI_CONFIRMATION_TTL_SECONDS", 300)),
+            )
+            response_payload["confirmation_id"] = str(confirmation.id)
+            response_payload["confirmation_expires_at"] = confirmation.expires_at.isoformat()
+
         log = self.write_log(log_data, draft, response_payload)
         if response_payload.get("acted"):
             response_payload["action_id"] = log.id
@@ -721,9 +797,15 @@ class AICommandView(APIView):
         if tier == TIER_BLOCKED:
             return build_blocked_response(draft, "This action is blocked for safety. Please do it manually in the CRM/admin screen.")
 
-        if draft.get("confidence", 0) < CONFIDENCE_THRESHOLD:
+        if draft.get("confidence", 0) < confidence_threshold():
             return build_review_response(draft, ["confidence"], tier, "Low confidence command. I need a more specific instruction before acting.")
-        return AICommandExecutor(user).execute(draft)
+
+        executor = AICommandExecutor(user)
+        if tier == TIER_CONFIRM:
+            # Tier-2: never mutate on the first request. Produce a validated
+            # preview; only fully-resolved actions return requires_confirmation.
+            return executor.preview(draft)
+        return executor.execute(draft)
 
     def write_log(self, log_data, draft, response_payload):
         log_data["resolved_intent"] = draft.get("intent") or ""
@@ -733,6 +815,8 @@ class AICommandView(APIView):
         log_data["summary"] = response_payload.get("summary") or response_payload.get("reason") or response_payload.get("refusal") or ""
         if response_payload.get("acted"):
             log_data["outcome"] = AICommandLog.Outcome.EXECUTED
+        elif response_payload.get("requires_confirmation"):
+            log_data["outcome"] = AICommandLog.Outcome.CONFIRMATION_REQUIRED
         elif response_payload.get("blocked"):
             log_data["outcome"] = AICommandLog.Outcome.BLOCKED
         elif response_payload.get("requires_disambiguation") or response_payload.get("needs_review"):
@@ -742,19 +826,96 @@ class AICommandView(APIView):
         return AICommandLog.objects.create(**log_data)
 
 
-class AICommandConfirmView(APIView):
-    permission_classes = [IsAdminRole]
+class AICommandConfirmView(BaseAICommandView):
+    """Execute a previously-approved Tier-2 action.
+
+    Accepts only an opaque confirmation id. The action that runs is the
+    server-stored draft, so a modified browser payload cannot change what is
+    executed. Single-use, owner-bound, and time-limited.
+    """
 
     def post(self, request):
-        return Response(
-            {"detail": "AI command confirmation is no longer used. Confident resolved commands execute immediately; ambiguous commands must be clarified."},
-            status=status.HTTP_410_GONE,
-        )
+        if not self.service_available():
+            return self.service_unavailable_response()
+
+        serializer = AICommandConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        confirmation_id = serializer.validated_data["confirmation_id"]
+
+        try:
+            confirmation = AICommandConfirmation.objects.get(id=confirmation_id)
+        except AICommandConfirmation.DoesNotExist:
+            return Response({"detail": "Confirmation was not found.", "code": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+        if confirmation.user_id != request.user.id:
+            return Response({"detail": "You cannot confirm this action.", "code": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+        if confirmation.status == AICommandConfirmation.Status.CANCELLED:
+            return Response({"detail": "This confirmation was cancelled.", "code": "cancelled"}, status=status.HTTP_409_CONFLICT)
+        if confirmation.status == AICommandConfirmation.Status.CONSUMED:
+            return Response({"detail": "This confirmation was already used.", "code": "already_used"}, status=status.HTTP_409_CONFLICT)
+        if confirmation.is_expired():
+            if confirmation.status != AICommandConfirmation.Status.EXPIRED:
+                confirmation.status = AICommandConfirmation.Status.EXPIRED
+                confirmation.save(update_fields=["status"])
+            return Response({"detail": "This confirmation has expired.", "code": "expired"}, status=status.HTTP_410_GONE)
+
+        with transaction.atomic():
+            locked = AICommandConfirmation.objects.select_for_update().get(id=confirmation_id)
+            if locked.status != AICommandConfirmation.Status.PENDING:
+                return Response({"detail": "This confirmation was already used.", "code": "already_used"}, status=status.HTTP_409_CONFLICT)
+
+            result = AICommandExecutor(request.user).execute(locked.draft)
+            locked.status = AICommandConfirmation.Status.CONSUMED
+            locked.consumed_at = timezone.now()
+            locked.save(update_fields=["status", "consumed_at"])
+
+            log_data = {
+                "user": request.user,
+                "raw_text": locked.raw_text,
+                "resolved_intent": locked.intent,
+                "tier": locked.tier,
+                "draft": locked.draft,
+                "action_data": result.get("action_data") or {},
+                "summary": result.get("summary") or result.get("reason") or "",
+            }
+            if result.get("acted"):
+                log_data["outcome"] = AICommandLog.Outcome.CONFIRMED
+            else:
+                log_data["outcome"] = AICommandLog.Outcome.ERROR
+            log = AICommandLog.objects.create(**log_data)
+
+        if not result.get("acted"):
+            # The referenced records changed since the preview; nothing was applied.
+            return Response(
+                {"detail": result.get("reason") or "The command can no longer be applied.", "code": "cannot_apply"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        result["action_id"] = log.id
+        return Response(result)
 
 
-class AICommandUndoView(APIView):
-    permission_classes = [IsAdminRole]
+class AICommandCancelView(BaseAICommandView):
+    """Explicitly cancel a pending confirmation so it can never be executed."""
 
+    def post(self, request):
+        serializer = AICommandConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        confirmation_id = serializer.validated_data["confirmation_id"]
+        try:
+            confirmation = AICommandConfirmation.objects.get(id=confirmation_id)
+        except AICommandConfirmation.DoesNotExist:
+            return Response({"detail": "Confirmation was not found.", "code": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if confirmation.user_id != request.user.id:
+            return Response({"detail": "You cannot cancel this action.", "code": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
+        if confirmation.status == AICommandConfirmation.Status.PENDING:
+            confirmation.status = AICommandConfirmation.Status.CANCELLED
+            confirmation.save(update_fields=["status"])
+        return Response({"cancelled": True, "confirmation_id": str(confirmation.id)})
+
+
+class AICommandUndoView(BaseAICommandView):
     def post(self, request):
         serializer = AICommandUndoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -762,23 +923,24 @@ class AICommandUndoView(APIView):
         try:
             log = AICommandLog.objects.get(id=action_id, user=request.user)
         except AICommandLog.DoesNotExist:
-            return Response({"detail": "AI action was not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "AI action was not found.", "code": "not_found"}, status=status.HTTP_404_NOT_FOUND)
 
         if log.undone_at:
-            return Response({"detail": "This AI action has already been undone."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "This AI action has already been undone.", "code": "already_undone"}, status=status.HTTP_400_BAD_REQUEST)
         action_data = log.action_data or {}
         if not action_data:
-            return Response({"detail": "This AI action cannot be undone."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "This AI action cannot be undone.", "code": "not_undoable"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            result = self.undo_action(action_data)
+            with transaction.atomic():
+                result = self.undo_action(action_data)
+                log.undone_at = timezone.now()
+                log.outcome = AICommandLog.Outcome.UNDONE
+                log.summary = f"Undone: {log.summary}"
+                log.save(update_fields=["undone_at", "outcome", "summary"])
         except LookupError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": str(exc), "code": "undo_failed"}, status=status.HTTP_404_NOT_FOUND)
 
-        log.undone_at = timezone.now()
-        log.outcome = AICommandLog.Outcome.UNDONE
-        log.summary = f"Undone: {log.summary}"
-        log.save(update_fields=["undone_at", "outcome", "summary"])
         return Response({"undone": True, "action_id": log.id, "summary": result})
 
     def undo_action(self, action_data):

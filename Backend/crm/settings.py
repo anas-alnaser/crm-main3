@@ -139,12 +139,33 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ),
+    "DEFAULT_PAGINATION_CLASS": "crm.pagination.DefaultPagination",
+    "PAGE_SIZE": int(env("API_PAGE_SIZE", "25")),
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.AnonRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "user": env("THROTTLE_USER", "5000/hour"),
+        "anon": env("THROTTLE_ANON", "100/hour"),
+        "login": env("THROTTLE_LOGIN", "20/min"),
+        "ai": env("THROTTLE_AI", "30/min"),
+    },
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(env("JWT_ACCESS_MINUTES", "30"))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(env("JWT_REFRESH_DAYS", "7"))),
+    "ROTATE_REFRESH_TOKENS": env("JWT_ROTATE_REFRESH", "False").lower() == "true",
 }
+
+# --- AI command configuration ---
+# The AI command feature is optional; when disabled or unconfigured the
+# endpoints return 503 without leaking provider details.
+AI_COMMANDS_ENABLED = env("AI_COMMANDS_ENABLED", "True").lower() == "true"
+AI_CONFIRMATION_TTL_SECONDS = int(env("AI_CONFIRMATION_TTL_SECONDS", "300"))
+AI_COMMAND_MAX_LENGTH = int(env("AI_COMMAND_MAX_LENGTH", "2000"))
+AI_CONFIDENCE_THRESHOLD = float(env("AI_CONFIDENCE_THRESHOLD", "0.75"))
 
 UNFOLD = {
     "SITE_TITLE": "Fueldezign CRM",
