@@ -1,40 +1,46 @@
 # Fueldezign CRM
 
-Private CRM for running Fueldezign, a branding/design/dev agency.
+Private CRM for running Fueldezign, a branding/design/dev agency: companies,
+projects, tasks, activities, meetings, and a sales pipeline (deals, commission,
+leaderboard), plus an admin-only natural-language AI command bar.
 
-## Architecture
+- **Backend** — Django REST Framework API + Django admin, JWT auth, SQLite for
+  local dev, PostgreSQL for production.
+- **Frontend** — React/Vite/TypeScript dashboard.
 
-- `Backend`: Django REST Framework API, Django admin, JWT login, business data, SQLite local fallback, PostgreSQL-ready settings.
-- `Frontend`: React/Vite dashboard for managing clients, projects, tasks, and activities.
+There is no public registration. Create users with `createsuperuser` or from the
+in-app Users page (admins only).
 
-There is no public registration flow. Create users from Django admin with `createsuperuser` or the admin user interface.
+## Documentation
 
-## Local PostgreSQL
+| Guide | |
+| --- | --- |
+| [Architecture](docs/ARCHITECTURE.md) | Stack, apps, data flow |
+| [Deployment](docs/DEPLOYMENT.md) | Docker production stack, migrations, rollback |
+| [Testing](docs/TESTING.md) | Backend + frontend + CI |
+| [AI commands](docs/AI_COMMANDS.md) | Tiers, confirmation, undo, safety model |
+| [Backup & recovery](docs/BACKUP.md) | pg_dump / restore |
 
-```bash
-docker compose up -d
-```
+## Quick start (local development)
 
-This starts PostgreSQL on `localhost:5432` with database/user/password `crm`.
-
-## Backend
+### Backend
 
 ```bash
 cd Backend
 python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+source .venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt  # runtime deps are in requirements.txt
 cp .env.example .env
 python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
 ```
 
-Open the admin at `http://localhost:8000/admin/`.
+Admin at `http://localhost:8000/admin/`. Leave `POSTGRES_DB` empty for SQLite;
+set `POSTGRES_DB=crm` (and the other `POSTGRES_*`) for PostgreSQL. For local
+PostgreSQL you can run `docker compose up -d postgres`.
 
-For SQLite local development, leave `POSTGRES_DB` empty in `Backend/.env`. For PostgreSQL, set `POSTGRES_DB=crm`.
-
-## Frontend
+### Frontend
 
 ```bash
 cd Frontend
@@ -44,3 +50,31 @@ npm run dev
 ```
 
 Open `http://localhost:5173` and log in with your Django user.
+
+## Production (Docker)
+
+```bash
+cp .env.example .env     # set POSTGRES_PASSWORD, DJANGO_SECRET_KEY, hosts, ANTHROPIC_API_KEY
+docker compose build
+docker compose up -d
+docker compose exec backend python manage.py createsuperuser
+curl -f http://localhost:8080/api/health/
+```
+
+Only the frontend (`:8080`) is published; it proxies `/api` to the backend. See
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide.
+
+## Roles
+
+- **Admin** — full access: manage users, commission, pipelines/stages, all
+  records; run AI commands.
+- **Sales** — read shared data; create/manage their own companies, projects,
+  tasks, activities, deals, and meetings; deal amounts owned by others are
+  masked. No user/commission/pipeline administration; no AI commands.
+
+## Testing
+
+```bash
+cd Backend  && python manage.py test          # backend
+cd Frontend && npm run test && npm run build   # frontend
+```
