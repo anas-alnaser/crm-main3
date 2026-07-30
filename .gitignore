@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Django
+staticfiles/
+media/
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
