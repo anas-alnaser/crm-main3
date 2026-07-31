@@ -36,9 +36,26 @@ Open `http://localhost:5173` and log in with a Django user.
 - React Router
 - Vitest + Testing Library for tests
 
+## Pages
+
+Beyond the core CRM pages, this build adds **My Shift** (`/my-shift`, shift-required
+employees), **Leads** (`/leads`), and admin-only **Workforce** (`/workforce`),
+**Audit Log** (`/audit`), and **Brand Profiles** (`/brands`). Navigation and routes
+are role-gated; `AdminRoute` guards the admin pages and the server enforces the
+same rules.
+
+## Presence
+
+`src/lib/presence.tsx` sends a throttled, content-free heartbeat (~30s, only when
+genuine interaction occurred, coordinated across tabs via `BroadcastChannel`) so
+the server can keep a work session alive. It records **nothing** about the
+interaction — no keys, text, or coordinates. See
+[../docs/WORKFORCE_POLICY.md](../docs/WORKFORCE_POLICY.md).
+
 ## Notes
 
 - List endpoints are paginated; the app fetches through `fetchList`/`fetchPage`
-  in `src/api/client.ts`.
+  in `src/api/client.ts`. Multipart uploads use `uploadForm`; supplemental UI
+  telemetry uses `sendTelemetry` (a whitelisted, best-effort call).
 - The AI command bar (admin only) drives the server confirmation/undo flow; it
   never performs entity writes directly — see [../docs/AI_COMMANDS.md](../docs/AI_COMMANDS.md).

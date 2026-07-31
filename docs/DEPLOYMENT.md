@@ -1,7 +1,8 @@
 # Deployment guide
 
-The production stack runs three containers: PostgreSQL, the Django API
-(gunicorn), and the React SPA (nginx, which also proxies `/api` to the API).
+The production stack runs four containers: PostgreSQL, the Django API (gunicorn),
+the React SPA (nginx, which also proxies `/api` to the API), and a lightweight
+**scheduler** that closes stale work sessions ~once per minute.
 
 ## 1. Configure
 
@@ -12,7 +13,19 @@ cp .env.example .env
 #   DJANGO_SECRET_KEY  - long random 50+ char value
 #   DJANGO_ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS - your host
 #   ANTHROPIC_API_KEY  - only if using AI commands (else AI_COMMANDS_ENABLED=False)
+#   BUSINESS_TIMEZONE  - defaults to Asia/Amman
+#   DATABASE_URL       - to host PostgreSQL on Supabase (Session Pooler, :5432);
+#                        takes precedence over POSTGRES_*. See the Supabase guide.
 ```
+
+### Hosting the database on Supabase
+
+Set `DATABASE_URL` to the Supabase **Session Pooler** URI (port 5432) and keep
+`DATABASE_SSLMODE=require`. Django owns the schema and migrations; the browser
+never talks to Supabase. Validate first with
+`python manage.py check_supabase --health-check` and follow
+[SUPABASE_CUTOVER_CHECKLIST.md](SUPABASE_CUTOVER_CHECKLIST.md). Harden the
+Supabase Data API so `anon`/`authenticated` roles cannot read CRM tables.
 
 Generate a secret key:
 
@@ -53,6 +66,16 @@ curl -f http://localhost:8080/api/health/     # {"status":"ok","database":true}
 Health: `GET /api/health/` (unauthenticated) returns `status` and `database`.
 The backend and postgres containers also have Docker `HEALTHCHECK`s
 (`docker compose ps` shows health).
+
+## Scheduler (stale work sessions)
+
+The `scheduler` service runs `python manage.py close_stale_work_sessions` every
+`SCHEDULER_INTERVAL` seconds (default 60) — idempotent, so overlap or restarts are
+safe. Media (brand logos, signatures) is written under `MEDIA_ROOT`; in production
+mount a **persistent** volume or configure object storage — an ephemeral container
+filesystem loses uploaded assets on restart (object-storage wiring is documented
+but pending). If you prefer not to run the container, use cron instead:
+`* * * * * docker compose exec -T backend python manage.py close_stale_work_sessions --quiet`.
 
 ## 5. Migrations on later releases
 

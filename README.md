@@ -1,11 +1,16 @@
-# Fueldezign CRM
+# Fuel × Morph CRM
 
-Private CRM for running Fueldezign, a branding/design/dev agency: companies,
-projects, tasks, activities, meetings, and a sales pipeline (deals, commission,
-leaderboard), plus an admin-only natural-language AI command bar.
+Private CRM for running the shared Fuel × Morph business: companies, projects,
+tasks, activities, meetings, and a sales pipeline (deals, commission,
+leaderboard), plus an admin-only natural-language AI command bar. This build adds
+**employee work policies & shift tracking**, **ten-minute inactivity closure**,
+**authoritative CRM audit logging**, **Excel lead import/assignment/conversion**,
+an **admin workforce dashboard**, and **Fuel / Morph Studio / Morph Solutions
+multi-brand profiles** with immutable document snapshots.
 
-- **Backend** — Django REST Framework API + Django admin, JWT auth, SQLite for
-  local dev, PostgreSQL for production.
+- **Backend** — Django REST Framework API + Django admin, JWT auth. SQLite for
+  local dev; PostgreSQL for production, hostable on **Supabase** (Django owns the
+  schema/migrations; the browser never talks to Supabase directly).
 - **Frontend** — React/Vite/TypeScript dashboard.
 
 There is no public registration. Create users with `createsuperuser` or from the
@@ -20,6 +25,12 @@ in-app Users page (admins only).
 | [Testing](docs/TESTING.md) | Backend + frontend + CI |
 | [AI commands](docs/AI_COMMANDS.md) | Tiers, confirmation, undo, safety model |
 | [Backup & recovery](docs/BACKUP.md) | pg_dump / restore |
+| [Supabase cutover](docs/SUPABASE_CUTOVER_CHECKLIST.md) | Session pooler, SSL, migration, rollback |
+| [Workforce & shifts](docs/WORKFORCE_POLICY.md) | Policies, 9AM–9PM, inactivity, crediting |
+| [Lead workflow](docs/LEAD_WORKFLOW.md) | Import, statuses, conversion, permissions |
+| [Audit logging](docs/AUDIT_LOGGING.md) | Events, redaction, privacy, viewer |
+| [Multi-brand documents](docs/MULTIBRAND_DOCUMENTS.md) | Legal/brand profiles, numbering, snapshots |
+| [Manual acceptance plan](docs/MANUAL_ACCEPTANCE_TEST_PLAN.md) | 40-scenario tester script |
 
 ## Quick start (local development)
 

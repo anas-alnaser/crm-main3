@@ -36,11 +36,17 @@ services:
       # Disable HTTPS redirect for plain-HTTP local runs; enable it (default)
       # behind a TLS-terminating proxy in real deployments.
       SECURE_SSL_REDIRECT: ${SECURE_SSL_REDIRECT:-False}
+      # Local Postgres by default; set DATABASE_URL in .env to use Supabase (it
+      # takes precedence over the POSTGRES_* variables).
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-require}
+      DATABASE_CONN_MAX_AGE: ${DATABASE_CONN_MAX_AGE:-60}
       POSTGRES_DB: ${POSTGRES_DB:-crm}
       POSTGRES_USER: ${POSTGRES_USER:-crm}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Amman}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_COMMANDS_ENABLED: ${AI_COMMANDS_ENABLED:-True}
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
@@ -49,6 +55,32 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    networks:
+      - crm
+
+  # Lightweight scheduler: closes stale work sessions (inactivity + 9 PM cap)
+  # roughly once a minute. Idempotent and concurrency-safe — no Redis/Celery.
+  scheduler:
+    build: ./Backend
+    container_name: fueldezign-crm-scheduler
+    restart: unless-stopped
+    command: ["sh", "-c", "while true; do python manage.py close_stale_work_sessions --quiet || true; sleep ${SCHEDULER_INTERVAL:-60}; done"]
+    environment:
+      DJANGO_DEBUG: "False"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?set a strong DJANGO_SECRET_KEY in .env}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-require}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Amman}
+    entrypoint: []
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - crm
 
