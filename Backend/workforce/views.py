@@ -11,7 +11,7 @@ from accounts.permissions import IsAdminRole
 
 from . import services
 from .models import EmployeeWorkPolicy, WorkPolicyException, WorkSession
-from .scheduler_auth import SchedulerAuthError, authenticate_scheduler
+from .scheduler_auth import SchedulerAuthError, authenticate_scheduler, error_status
 from .serializers import (
     EmployeeWorkPolicySerializer,
     WorkPolicyExceptionSerializer,
@@ -22,12 +22,22 @@ from .services import ShiftError, close_stale_sessions
 
 logger = logging.getLogger("workforce")
 
-# SchedulerAuthError.code -> HTTP status for the internal reconcile endpoint.
-_SCHEDULER_ERROR_STATUS = {
-    "missing_token": status.HTTP_401_UNAUTHORIZED,
-    "invalid_token": status.HTTP_403_FORBIDDEN,
-    "not_configured": status.HTTP_503_SERVICE_UNAVAILABLE,
-}
+
+def _scheduler_public_error(http_status: int, category: str):
+    """Generic (detail, code) pair for the response.
+
+    The response never reveals which specific token check failed (e.g. wrong
+    audience vs bad signature); every token problem collapses to ``invalid_token``.
+    Only the non-sensitive deployment state ``not_configured`` is surfaced, since
+    it involves no token and helps operators.
+    """
+    if http_status == status.HTTP_401_UNAUTHORIZED:
+        return "Missing bearer token.", "missing_token"
+    if http_status == status.HTTP_503_SERVICE_UNAVAILABLE:
+        if category == "not_configured":
+            return "The scheduler endpoint is not configured.", "not_configured"
+        return "The scheduler endpoint is temporarily unavailable.", "unavailable"
+    return "Invalid scheduler token.", "invalid_token"
 
 
 def _shift_error_response(exc: ShiftError):
@@ -309,13 +319,15 @@ class SchedulerReconcileView(APIView):
         try:
             authenticate_scheduler(request)
         except SchedulerAuthError as exc:
-            if exc.code != "missing_token":
-                # Missing token is routine noise; log genuine rejections.
+            http_status = error_status(exc.code)
+            # Log ONLY the coarse rejection category — never the token, the
+            # Authorization header, or any claim value.
+            if exc.code == "missing_token":
+                logger.info("Scheduler reconcile rejected: %s", exc.code)
+            else:
                 logger.warning("Scheduler reconcile rejected: %s", exc.code)
-            return Response(
-                {"detail": exc.message, "code": exc.code},
-                status=_SCHEDULER_ERROR_STATUS.get(exc.code, status.HTTP_403_FORBIDDEN),
-            )
+            detail, public_code = _scheduler_public_error(http_status, exc.code)
+            return Response({"detail": detail, "code": public_code}, status=http_status)
 
         # Deliberately ignores request body/query entirely.
         result = close_stale_sessions()

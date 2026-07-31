@@ -248,10 +248,21 @@ gcloud scheduler jobs create http crm-workforce-reconcile \
 How the endpoint authenticates the call (`workforce/scheduler_auth.py`):
 
 1. The request must present `Authorization: Bearer <oidc-jwt>`.
-2. The JWT signature is verified against Google's public keys (RS256), with the
-   audience pinned to `WORKFORCE_SCHEDULER_AUDIENCE` and `exp`/`iat` enforced.
+2. The token is verified with Google's official library
+   (`google.oauth2.id_token.verify_oauth2_token`): RS256 signature against
+   Google's certificates, audience pinned to `WORKFORCE_SCHEDULER_AUDIENCE`,
+   expiry, and Google issuer. Certificates are fetched through a process‑local
+   caching transport that honours their `Cache-Control` max‑age, so the
+   one‑minute cadence does not refetch certs every call.
 3. The verified token must be Google‑issued (`iss`) for
    `WORKFORCE_SCHEDULER_SERVICE_ACCOUNT`, with `email_verified: true`.
+
+Verification never fails open: any unexpected error (including a certificate
+fetch failure) is a rejection, not an authorisation. Responses stay generic
+(`invalid_token`); the precise reason is logged server‑side as a non‑sensitive
+category only — the token and Authorization header are never logged. The
+verifier ships in the `google-auth` dependency (with `requests` as its
+transport), both pinned in `Backend/requirements.txt`.
 
 Anything else — a normal user's app JWT, an admin's browser session, or an
 anonymous request — carries no such token and is rejected (401/403). The handler

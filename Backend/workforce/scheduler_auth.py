@@ -1,49 +1,70 @@
 """Authenticate the internal work-session reconciliation endpoint.
 
-The reconciliation endpoint is invoked only by a Google Cloud Scheduler job, once
-a minute, over the public internet (Cloud Run must stay publicly reachable so the
-browser SPA can call the rest of the API). It therefore authenticates the caller
-at the application layer using the **verified OIDC token** that Cloud Scheduler
-attaches to the request:
+Google Cloud Scheduler calls it once a minute with a Google-signed OIDC ID token
+in the ``Authorization: Bearer`` header. The token is verified with Google's
+official library — ``google.oauth2.id_token.verify_oauth2_token`` — which
+cryptographically checks the signature against Google's published certificates,
+the audience, the expiry, and that the issuer is Google. On top of that we
+explicitly enforce the caller identity:
 
-1. The request must carry ``Authorization: Bearer <jwt>``.
-2. The JWT is verified against Google's public signing keys (RS256), with the
-   audience pinned to our configured value and ``exp``/``iat`` enforced.
-3. The verified token must be issued by Google (``iss``) for the specific
-   scheduler service account (``email`` + ``email_verified``) we expect.
+* the issuer is a recognised Google issuer,
+* ``email`` equals ``WORKFORCE_SCHEDULER_SERVICE_ACCOUNT``,
+* ``email_verified`` is true.
 
-No user id, timestamp, or any other value from the request body/query is trusted
-— the endpoint only decides *who is calling*, never *what to do* (it always runs
-the same idempotent, server-clock sweep). A normal user's SimpleJWT, an admin's
-browser session, and anonymous requests all fail step 1–3 and are rejected.
+Nothing from the request body or query is ever trusted — the endpoint only
+decides *who is calling*, never *what to do*. A normal user's app JWT, an admin's
+browser session, and anonymous requests all fail and are rejected.
 
-The signature/audience verification (:func:`verify_oidc_token`) is a module-level
-seam so tests can inject deterministic claims without a network round-trip; the
-identity enforcement below always runs against those claims.
+Security notes:
+
+* We never log, store, or echo the token or Authorization header. Callers log
+  only a coarse, non-sensitive rejection *category* (see ``error_status``).
+* Google's certificates are fetched through a process-local caching transport
+  (:class:`_CachingRequest`) that honours the response ``Cache-Control`` max-age,
+  so the one-minute cadence does not refetch certificates every call.
+* Verification failures never fail open: any unexpected error (including a cert
+  fetch/transport failure) is treated as a rejection, not an authorisation.
+
+``verify_oidc_token`` is the seam mocked by tests so the suite never calls Google.
 """
 from __future__ import annotations
 
+import threading
+import time
+
 from django.conf import settings
 
-# Google mints service-account ID tokens under these issuers.
+# Recognised Google OIDC issuers for service-account ID tokens.
 GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
-GOOGLE_CERTS_URL = "https://www.googleapis.com/oauth2/v3/certs"
 
-# Cache the fetched JWK set for an hour; Google rotates keys roughly daily and
-# with one call per minute this keeps network chatter negligible.
-_JWKS_CACHE_LIFESPAN_SECONDS = 3600
-
-_jwks_client = None
+# HTTP status per rejection category. Anything not listed is a token problem
+# (bad signature / audience / issuer / service account / expiry ...) -> 403.
+_ERROR_STATUS = {
+    "missing_token": 401,
+    "not_configured": 503,
+    "verification_unavailable": 503,
+}
 
 
 class SchedulerAuthError(Exception):
-    """Rejection of a scheduler request. ``code`` maps to an HTTP status."""
+    """Rejection of a scheduler request.
 
-    def __init__(self, code: str, message: str):
+    ``code`` is a non-sensitive category safe to log; it never contains token
+    content. ``message`` is a generic, caller-facing string.
+    """
+
+    def __init__(self, code: str, message: str = "Invalid scheduler token."):
         super().__init__(message)
         self.code = code
         self.message = message
 
+
+def error_status(code: str) -> int:
+    """HTTP status for a rejection category (defaults to 403)."""
+    return _ERROR_STATUS.get(code, 403)
+
+
+# --- configuration ----------------------------------------------------------
 
 def _setting(name: str) -> str:
     return (getattr(settings, name, "") or "").strip()
@@ -53,11 +74,12 @@ def _required_setting(name: str) -> str:
     value = _setting(name)
     if not value:
         raise SchedulerAuthError(
-            "not_configured",
-            "The scheduler reconciliation endpoint is not configured.",
+            "not_configured", "The scheduler reconciliation endpoint is not configured."
         )
     return value
 
+
+# --- request parsing --------------------------------------------------------
 
 def _extract_bearer_token(request) -> str:
     header = request.META.get("HTTP_AUTHORIZATION", "")
@@ -67,47 +89,133 @@ def _extract_bearer_token(request) -> str:
     return parts[1]
 
 
-def _get_jwks_client():
-    global _jwks_client
-    if _jwks_client is None:
-        import jwt
+# --- Google certificate transport with process-local caching ----------------
 
-        _jwks_client = jwt.PyJWKClient(
-            GOOGLE_CERTS_URL, lifespan=_JWKS_CACHE_LIFESPAN_SECONDS
-        )
-    return _jwks_client
+_verifier_request = None
+_verifier_lock = threading.Lock()
 
+
+def _max_age_seconds(headers) -> int:
+    """Seconds a cert response may be cached, from its Cache-Control/Age headers.
+
+    Returns 0 (do not cache) when no positive ``max-age`` is present.
+    """
+    if not headers:
+        return 0
+    get = getattr(headers, "get", None)
+    if get is None:
+        return 0
+    cache_control = get("Cache-Control") or get("cache-control") or ""
+    max_age = 0
+    for part in str(cache_control).split(","):
+        part = part.strip().lower()
+        if part.startswith("max-age="):
+            try:
+                max_age = int(part.split("=", 1)[1])
+            except ValueError:
+                max_age = 0
+    if max_age <= 0:
+        return 0
+    age = 0
+    age_header = get("Age") or get("age")
+    if age_header is not None:
+        try:
+            age = int(age_header)
+        except (TypeError, ValueError):
+            age = 0
+    return max(0, max_age - max(0, age))
+
+
+class _CachingRequest:
+    """A google-auth transport ``Request`` that caches GET responses (Google's
+    certificate endpoint) process-locally, honouring their Cache-Control max-age.
+
+    This avoids refetching Google's certificates on every one-minute scheduler
+    call. Nothing is persisted to disk; the cache is per-process and in-memory.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self._lock = threading.Lock()
+        self._cache: dict = {}
+
+    def __call__(self, url, method="GET", body=None, headers=None, **kwargs):
+        cacheable = method == "GET" and not body
+        if cacheable:
+            with self._lock:
+                entry = self._cache.get(url)
+                if entry is not None and entry[0] > time.monotonic():
+                    return entry[1]
+        response = self._inner(url, method=method, body=body, headers=headers, **kwargs)
+        if cacheable and getattr(response, "status", None) == 200:
+            ttl = _max_age_seconds(getattr(response, "headers", None))
+            if ttl > 0:
+                with self._lock:
+                    self._cache[url] = (time.monotonic() + ttl, response)
+        return response
+
+
+def _get_verifier_request():
+    global _verifier_request
+    if _verifier_request is None:
+        with _verifier_lock:
+            if _verifier_request is None:
+                import requests as _requests
+                from google.auth.transport import requests as ga_requests
+
+                session = _requests.Session()
+                _verifier_request = _CachingRequest(ga_requests.Request(session=session))
+    return _verifier_request
+
+
+# --- verification -----------------------------------------------------------
 
 def verify_oidc_token(token: str, audience: str) -> dict:
-    """Verify a Google-signed OIDC token's signature, audience, and expiry.
+    """Cryptographically verify a Google OIDC ID token and return its claims.
 
-    Returns the decoded claims. Raises for any cryptographic/validation failure.
-    Patched in tests to avoid a live call to Google's certificate endpoint.
+    Uses Google's official verifier: checks the RS256 signature against Google's
+    certificates, the audience, the expiry, and the Google issuer. Raises
+    ``ValueError`` for a bad token and other exceptions for transport/cert
+    failures. Mocked in tests so no live Google call is made.
     """
-    import jwt
+    from google.oauth2 import id_token
 
-    signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
-    return jwt.decode(
-        token,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience=audience,
-        options={"require": ["exp", "iat", "aud", "iss"]},
-    )
+    return id_token.verify_oauth2_token(token, _get_verifier_request(), audience)
+
+
+def _categorize_value_error(exc: ValueError) -> str:
+    """Map a verifier ValueError to a non-sensitive category (logging only)."""
+    msg = str(exc).lower()
+    if "expired" in msg:
+        return "expired_token"
+    if "audience" in msg:
+        return "wrong_audience"
+    if "issuer" in msg:
+        return "wrong_issuer"
+    if "signature" in msg:
+        return "invalid_signature"
+    if "segment" in msg or "malformed" in msg or "wrong number" in msg or "could not" in msg:
+        return "malformed_token"
+    return "invalid_token"
 
 
 def _enforce_identity(claims: dict, expected_email: str) -> None:
     if claims.get("iss") not in GOOGLE_ISSUERS:
-        raise SchedulerAuthError("invalid_token", "Untrusted token issuer.")
-    if not claims.get("email_verified", False):
-        raise SchedulerAuthError("invalid_token", "Token email is not verified.")
+        raise SchedulerAuthError("wrong_issuer")
+    verified = claims.get("email_verified", False)
+    if verified is not True and str(verified).strip().lower() != "true":
+        raise SchedulerAuthError("unverified_email")
     email = (claims.get("email") or "").strip().lower()
     if not email or email != expected_email.strip().lower():
-        raise SchedulerAuthError("invalid_token", "Token subject is not permitted.")
+        raise SchedulerAuthError("wrong_service_account")
 
 
 def authenticate_scheduler(request) -> dict:
-    """Return the verified OIDC claims, or raise :class:`SchedulerAuthError`."""
+    """Return the verified OIDC claims, or raise :class:`SchedulerAuthError`.
+
+    Never trusts unverified claims: the identity checks below run only on the
+    output of the cryptographic verifier.
+    """
     audience = _required_setting("WORKFORCE_SCHEDULER_AUDIENCE")
     expected_email = _required_setting("WORKFORCE_SCHEDULER_SERVICE_ACCOUNT")
     token = _extract_bearer_token(request)
@@ -115,8 +223,14 @@ def authenticate_scheduler(request) -> dict:
         claims = verify_oidc_token(token, audience)
     except SchedulerAuthError:
         raise
+    except ValueError as exc:
+        # Bad signature / audience / expiry / issuer / malformed token.
+        raise SchedulerAuthError(_categorize_value_error(exc)) from None
     except Exception:
-        # Bad signature, wrong audience, expired, malformed, unknown key, etc.
-        raise SchedulerAuthError("invalid_token", "Invalid scheduler token.")
+        # Certificate fetch/transport failure, verifier unavailable, etc.
+        # Reject safely — never fail open.
+        raise SchedulerAuthError(
+            "verification_unavailable", "Token verification is temporarily unavailable."
+        ) from None
     _enforce_identity(claims, expected_email)
     return claims

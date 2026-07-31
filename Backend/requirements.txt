@@ -1,9 +1,11 @@
 Django>=5.0,<6.0
 djangorestframework>=3.15,<4.0
 djangorestframework-simplejwt>=5.3,<6.0
-# Used directly to verify Google OIDC tokens on the scheduler endpoint
-# (also a transitive dependency of djangorestframework-simplejwt).
-PyJWT>=2.6,<3.0
+# Google's official OIDC verifier for the Cloud Scheduler endpoint. Ships its own
+# RS256 backend and cert handling, so no separate PyJWT[crypto]/cryptography wiring
+# is needed. `requests` provides the transport for google.auth.transport.requests.
+google-auth>=2.0,<3.0
+requests>=2.31,<3.0
 django-cors-headers>=4.3,<5.0
 django-filter>=24.2,<25.0
 django-unfold>=0.40,<1.0
