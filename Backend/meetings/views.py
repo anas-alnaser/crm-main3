@@ -6,6 +6,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from audit.mixins import AuditLogMixin
+from workforce.permissions import ShiftRequiredForWrite
 from .models import Meeting
 from .serializers import MeetingSerializer
 
@@ -20,10 +22,10 @@ class MeetingPermission(BasePermission):
         return obj.owner_id == request.user.id
 
 
-class MeetingViewSet(ModelViewSet):
+class MeetingViewSet(AuditLogMixin, ModelViewSet):
     queryset = Meeting.objects.select_related("owner", "deal", "company")
     serializer_class = MeetingSerializer
-    permission_classes = [MeetingPermission]
+    permission_classes = [MeetingPermission, ShiftRequiredForWrite]
     filterset_fields = ["status", "owner", "deal", "company"]
     search_fields = ["title", "description", "location", "company__name", "deal__title", "owner__username"]
     ordering_fields = ["start_datetime", "end_datetime", "status", "created_at", "updated_at"]
@@ -48,13 +50,16 @@ class MeetingViewSet(ModelViewSet):
     def perform_create(self, serializer):
         user = self.request.user
         owner = serializer.validated_data.get("owner") if user.is_admin_role else user
-        serializer.save(owner=owner or user)
+        instance = serializer.save(owner=owner or user)
+        self.audit_created(instance, summary=f"Meeting '{instance.title}' created.")
 
     def perform_update(self, serializer):
+        old = self.capture_old(serializer.instance)
         if self.request.user.is_admin_role:
-            serializer.save()
+            instance = serializer.save()
         else:
-            serializer.save(owner=self.request.user)
+            instance = serializer.save(owner=self.request.user)
+        self.audit_updated(instance, old, summary=f"Meeting '{instance.title}' updated.")
 
     @action(detail=False, methods=["get"], url_path="upcoming")
     def upcoming(self, request):

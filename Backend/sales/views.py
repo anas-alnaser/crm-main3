@@ -12,6 +12,8 @@ from rest_framework.viewsets import ModelViewSet
 
 from accounts.models import User
 from accounts.permissions import DealPermission, IsAdminOrReadOnly
+from audit.mixins import AuditLogMixin
+from workforce.permissions import ShiftRequiredForWrite
 from .models import Deal, Pipeline, SalesSettings, Stage
 from .serializers import DealSerializer, PipelineSerializer, SalesSettingsSerializer, StageSerializer
 
@@ -70,10 +72,11 @@ class StageViewSet(ProtectedDeleteMixin, ModelViewSet):
     ordering = ["pipeline", "order", "name"]
 
 
-class DealViewSet(ModelViewSet):
+class DealViewSet(AuditLogMixin, ModelViewSet):
     queryset = Deal.objects.select_related("company", "owner", "pipeline", "stage")
     serializer_class = DealSerializer
-    permission_classes = [DealPermission]
+    permission_classes = [DealPermission, ShiftRequiredForWrite]
+    audit_track_fields = ["title", "value", "currency", "stage", "pipeline", "owner", "status", "expected_close_date"]
     filterset_fields = ["company", "pipeline", "stage", "owner", "status", "expected_close_date"]
     search_fields = ["title", "company__name", "contact_person", "owner__username", "notes"]
     ordering_fields = ["title", "value", "currency", "status", "expected_close_date", "created_at", "updated_at"]
@@ -89,14 +92,17 @@ class DealViewSet(ModelViewSet):
         # Sales users always own the deals they create; only admins may assign
         # an owner. Enforced server-side, not just in the UI.
         owner = serializer.validated_data.get("owner") if self.request.user.is_admin_role else self.request.user
-        serializer.save(owner=owner or self.request.user)
+        instance = serializer.save(owner=owner or self.request.user)
+        self.audit_created(instance, summary=f"Deal '{instance.title}' created.")
 
     def perform_update(self, serializer):
+        old = self.capture_old(serializer.instance)
         # Non-admins cannot reassign ownership of a deal, even via direct API.
         if self.request.user.is_admin_role:
-            serializer.save()
+            instance = serializer.save()
         else:
-            serializer.save(owner=serializer.instance.owner)
+            instance = serializer.save(owner=serializer.instance.owner)
+        self.audit_updated(instance, old, summary=f"Deal '{instance.title}' updated.")
 
     @action(detail=True, methods=["patch"], url_path="move")
     def move(self, request, pk=None):
@@ -110,9 +116,17 @@ class DealViewSet(ModelViewSet):
         except Stage.DoesNotExist:
             raise serializers.ValidationError({"stage": "Stage does not exist."})
 
+        old_stage = deal.stage.name if deal.stage_id else None
+        old_status = deal.status
         deal.pipeline = stage.pipeline
         deal.stage = stage
         deal.save()
+        self.audit_action(
+            deal, "deal.moved",
+            f"Deal '{deal.title}' moved from {old_stage} to {stage.name}.",
+            old_values={"stage": old_stage, "status": old_status},
+            new_values={"stage": stage.name, "status": deal.status},
+        )
         return Response(self.get_serializer(deal).data, status=status.HTTP_200_OK)
 
 

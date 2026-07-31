@@ -2,10 +2,14 @@ from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.generics import RetrieveAPIView
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from audit.models import AuditCategory
+from audit.services import record_event
 from crm.throttling import LoginRateThrottle
 from .permissions import IsAdminRole
 from .models import User
@@ -17,9 +21,30 @@ from .serializers import (
 
 
 class ThrottledTokenObtainPairView(TokenObtainPairView):
-    """Login endpoint with IP-based throttling to slow brute-force attempts."""
+    """Login endpoint with IP-based throttling to slow brute-force attempts.
+
+    Records a server-authoritative audit event for successful and failed logins
+    (the failure event stores only the attempted username, never the password)."""
 
     throttle_classes = [LoginRateThrottle]
+
+    def post(self, request, *args, **kwargs):
+        username = str(request.data.get("username", ""))[:150]
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == status.HTTP_200_OK:
+            user = User.objects.filter(username=username).first()
+            record_event(
+                action="auth.login_success", category=AuditCategory.AUTH, user=user, request=request,
+                entity_type="User", entity_id=getattr(user, "pk", ""),
+                summary=f"Login success for {username}.",
+            )
+        else:
+            record_event(
+                action="auth.login_failed", category=AuditCategory.AUTH, request=request,
+                summary=f"Failed login attempt for username '{username}'.",
+                metadata={"username": username},
+            )
+        return response
 
 
 class CurrentUserView(RetrieveAPIView):
@@ -27,6 +52,19 @@ class CurrentUserView(RetrieveAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class LogoutView(APIView):
+    """Stateless-JWT logout: the client discards tokens; we record the event."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        record_event(
+            action="auth.logout", category=AuditCategory.AUTH, user=request.user, request=request,
+            entity_type="User", entity_id=request.user.pk, summary=f"Logout for {request.user.username}.",
+        )
+        return Response({"detail": "Logged out."})
 
 
 def active_admin_count(exclude_id=None):
@@ -46,6 +84,14 @@ class UserViewSet(ModelViewSet):
     search_fields = ["username", "email", "first_name", "last_name"]
     filterset_fields = ["role", "is_active"]
     ordering_fields = ["username", "email", "role", "is_active", "id"]
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        record_event(
+            action="user.created", category=AuditCategory.USER, user=self.request.user, request=self.request,
+            entity_type="User", entity_id=user.pk, summary=f"User '{user.username}' created with role {user.role}.",
+            new_values={"username": user.username, "role": user.role},
+        )
 
     def destroy(self, request, *args, **kwargs):
         # Hard deletion is disabled through the CRM API to preserve ownership
@@ -71,6 +117,10 @@ class UserViewSet(ModelViewSet):
         if user.is_active:
             user.is_active = False
             user.save(update_fields=["is_active"])
+            record_event(
+                action="user.deactivated", category=AuditCategory.USER, user=request.user, request=request,
+                entity_type="User", entity_id=user.pk, summary=f"User '{user.username}' deactivated.",
+            )
         return Response(self.get_serializer(user).data)
 
     @action(detail=True, methods=["patch"], url_path="reactivate")
@@ -79,6 +129,10 @@ class UserViewSet(ModelViewSet):
         if not user.is_active:
             user.is_active = True
             user.save(update_fields=["is_active"])
+            record_event(
+                action="user.reactivated", category=AuditCategory.USER, user=request.user, request=request,
+                entity_type="User", entity_id=user.pk, summary=f"User '{user.username}' reactivated.",
+            )
         return Response(self.get_serializer(user).data)
 
     @action(detail=True, methods=["post"], url_path="reset-password")

@@ -14,6 +14,8 @@ from rest_framework.views import APIView
 
 from accounts.permissions import IsAdminRole
 from activities.models import Activity
+from audit.models import AuditCategory
+from audit.services import record_event
 from clients.models import Client
 from crm.throttling import AICommandThrottle
 from meetings.models import Meeting
@@ -788,6 +790,20 @@ class AICommandView(BaseAICommandView):
         log = self.write_log(log_data, draft, response_payload)
         if response_payload.get("acted"):
             response_payload["action_id"] = log.id
+
+        # Mirror the outcome into the unified audit trail.
+        if response_payload.get("blocked"):
+            audit_action = "ai.command_blocked"
+        elif response_payload.get("acted"):
+            audit_action = "ai.command_executed"
+        else:
+            audit_action = "ai.command_submitted"
+        record_event(
+            action=audit_action, category=AuditCategory.AI, user=request.user, request=request,
+            entity_type="AICommandLog", entity_id=log.id,
+            summary=response_payload.get("summary") or response_payload.get("refusal") or f"AI command ({draft.get('intent') or 'unknown'}).",
+            metadata={"intent": draft.get("intent"), "tier": response_payload.get("tier")},
+        )
         return Response(response_payload)
 
     def evaluate_draft(self, draft, user):
@@ -894,6 +910,12 @@ class AICommandConfirmView(BaseAICommandView):
             )
 
         result["action_id"] = log.id
+        record_event(
+            action="ai.command_confirmed", category=AuditCategory.AI, user=request.user, request=request,
+            entity_type="AICommandLog", entity_id=log.id,
+            summary=result.get("summary") or f"AI command confirmed ({locked.intent}).",
+            metadata={"intent": locked.intent},
+        )
         return Response(result)
 
 
@@ -942,6 +964,10 @@ class AICommandUndoView(BaseAICommandView):
         except LookupError as exc:
             return Response({"detail": str(exc), "code": "undo_failed"}, status=status.HTTP_404_NOT_FOUND)
 
+        record_event(
+            action="ai.command_undone", category=AuditCategory.AI, user=request.user, request=request,
+            entity_type="AICommandLog", entity_id=log.id, summary=f"AI action #{log.id} undone.",
+        )
         return Response({"undone": True, "action_id": log.id, "summary": result})
 
     def undo_action(self, action_data):

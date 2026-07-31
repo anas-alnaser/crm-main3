@@ -6,8 +6,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def load_env_file():
-    env_path = BASE_DIR / ".env"
+def _load_single_env_file(env_path):
     if not env_path.exists():
         return
     for line in env_path.read_text().splitlines():
@@ -16,6 +15,22 @@ def load_env_file():
             continue
         key, value = line.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip())
+
+
+def load_env_file():
+    """Load ``.env`` plus any extra files named in ``DJANGO_ENV_FILE``.
+
+    ``DJANGO_ENV_FILE`` (comma-separated, relative to ``Backend/``) lets a
+    developer point Django at an alternative environment without editing ``.env``
+    — e.g. ``DJANGO_ENV_FILE=.env.supabase.local`` to run migrations against the
+    Supabase project. Existing OS env vars always win (``setdefault``), and the
+    real files stay git-ignored.
+    """
+    _load_single_env_file(BASE_DIR / ".env")
+    for name in os.environ.get("DJANGO_ENV_FILE", "").split(","):
+        name = name.strip()
+        if name:
+            _load_single_env_file(BASE_DIR / name)
 
 
 load_env_file()
@@ -49,6 +64,10 @@ INSTALLED_APPS = [
     "activities",
     "meetings",
     "ai_commands",
+    "audit",
+    "workforce",
+    "leads",
+    "branding",
 ]
 
 MIDDLEWARE = [
@@ -83,24 +102,13 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "crm.wsgi.application"
 
-if env("POSTGRES_DB"):
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": env("POSTGRES_DB"),
-            "USER": env("POSTGRES_USER", "postgres"),
-            "PASSWORD": env("POSTGRES_PASSWORD", "postgres"),
-            "HOST": env("POSTGRES_HOST", "localhost"),
-            "PORT": env("POSTGRES_PORT", "5432"),
-        }
-    }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+# Database — Supabase (or any) PostgreSQL is the *host*; the Django ORM stays
+# authoritative over the schema and migrations. See crm/dbconfig.py for the
+# resolution order (DATABASE_URL -> POSTGRES_* -> SQLite dev fallback) and for
+# credential-safe redaction. Production never silently falls back to SQLite.
+from crm.dbconfig import build_database_config  # noqa: E402
+
+DATABASES = {"default": build_database_config(env, debug=DEBUG)}
 
 AUTH_USER_MODEL = "accounts.User"
 
@@ -112,7 +120,11 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = "en-us"
+# Timestamps are stored in UTC (USE_TZ=True). Shift/workforce logic and business
+# reporting use the business timezone below (Asia/Amman) for day boundaries and
+# the 9:00 AM–9:00 PM working window.
 TIME_ZONE = "UTC"
+BUSINESS_TIMEZONE = env("BUSINESS_TIMEZONE", "Asia/Amman")
 USE_I18N = True
 USE_TZ = True
 
@@ -149,6 +161,7 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "crm.pagination.DefaultPagination",
     "PAGE_SIZE": int(env("API_PAGE_SIZE", "25")),
+    "EXCEPTION_HANDLER": "crm.exception_handler.custom_exception_handler",
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
@@ -174,6 +187,28 @@ AI_COMMANDS_ENABLED = env("AI_COMMANDS_ENABLED", "True").lower() == "true"
 AI_CONFIRMATION_TTL_SECONDS = int(env("AI_CONFIRMATION_TTL_SECONDS", "300"))
 AI_COMMAND_MAX_LENGTH = int(env("AI_COMMAND_MAX_LENGTH", "2000"))
 AI_CONFIDENCE_THRESHOLD = float(env("AI_CONFIDENCE_THRESHOLD", "0.75"))
+
+# --- Workforce / shift configuration ---
+# The shift window and daily target are policy defaults; each EmployeeWorkPolicy
+# can override them. Inactivity closes a session after this many idle minutes,
+# and the full idle window is credited (see docs/WORKFORCE_POLICY.md).
+WORKFORCE_INACTIVITY_MINUTES = int(env("WORKFORCE_INACTIVITY_MINUTES", "10"))
+WORKFORCE_HEARTBEAT_SECONDS = int(env("WORKFORCE_HEARTBEAT_SECONDS", "30"))
+WORKFORCE_DEFAULT_START_TIME = env("WORKFORCE_DEFAULT_START_TIME", "09:00")
+WORKFORCE_DEFAULT_END_TIME = env("WORKFORCE_DEFAULT_END_TIME", "21:00")
+WORKFORCE_DEFAULT_DAILY_TARGET_MINUTES = int(env("WORKFORCE_DEFAULT_DAILY_TARGET_MINUTES", "180"))
+
+# --- Media / uploaded assets (brand logos, signatures, retained lead files) ---
+# Local filesystem storage in development. Production must mount persistent
+# storage or configure an object-storage backend (see docs/DEPLOYMENT.md and
+# crm/storage.py); an ephemeral container filesystem is not sufficient.
+MEDIA_URL = env("MEDIA_URL", "/media/")
+MEDIA_ROOT = BASE_DIR / "media"
+# Hard caps enforced when validating uploads (bytes / pixels).
+UPLOAD_MAX_IMAGE_BYTES = int(env("UPLOAD_MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
+UPLOAD_MAX_IMAGE_DIMENSION = int(env("UPLOAD_MAX_IMAGE_DIMENSION", "4000"))
+LEAD_IMPORT_MAX_BYTES = int(env("LEAD_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)))
+LEAD_IMPORT_MAX_ROWS = int(env("LEAD_IMPORT_MAX_ROWS", "5000"))
 
 UNFOLD = {
     "SITE_TITLE": "Fueldezign CRM",

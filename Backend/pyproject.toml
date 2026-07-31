@@ -11,8 +11,8 @@ select = ["E", "F", "W"]
 ignore = ["E501", "E741"]
 
 [tool.coverage.run]
-source = ["accounts", "activities", "ai_commands", "clients", "crm", "meetings", "projects", "sales", "tasks"]
-omit = ["*/migrations/*", "*/tests.py", "*/apitestbase.py", "manage.py", "*/wsgi.py", "*/asgi.py"]
+source = ["accounts", "activities", "ai_commands", "audit", "branding", "clients", "crm", "leads", "meetings", "projects", "sales", "tasks", "workforce"]
+omit = ["*/migrations/*", "*/tests.py", "*/test_*.py", "*/apitestbase.py", "manage.py", "*/wsgi.py", "*/asgi.py"]
 
 [tool.coverage.report]
 show_missing = true
