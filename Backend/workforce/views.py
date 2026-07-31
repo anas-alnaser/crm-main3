@@ -1,6 +1,8 @@
+import logging
+
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
@@ -9,13 +11,23 @@ from accounts.permissions import IsAdminRole
 
 from . import services
 from .models import EmployeeWorkPolicy, WorkPolicyException, WorkSession
+from .scheduler_auth import SchedulerAuthError, authenticate_scheduler
 from .serializers import (
     EmployeeWorkPolicySerializer,
     WorkPolicyExceptionSerializer,
     WorkSessionSerializer,
     humanize_seconds,
 )
-from .services import ShiftError
+from .services import ShiftError, close_stale_sessions
+
+logger = logging.getLogger("workforce")
+
+# SchedulerAuthError.code -> HTTP status for the internal reconcile endpoint.
+_SCHEDULER_ERROR_STATUS = {
+    "missing_token": status.HTTP_401_UNAUTHORIZED,
+    "invalid_token": status.HTTP_403_FORBIDDEN,
+    "not_configured": status.HTTP_503_SERVICE_UNAVAILABLE,
+}
 
 
 def _shift_error_response(exc: ShiftError):
@@ -271,3 +283,47 @@ class WorkforceEmployeesView(APIView):
         policies = EmployeeWorkPolicy.objects.select_related("user").order_by("user__username")
         users = [p.user for p in policies]
         return Response(UserSerializer(users, many=True).data)
+
+
+class SchedulerReconcileView(APIView):
+    """Internal endpoint that closes stale work sessions on the server clock.
+
+    Called once a minute by a Google Cloud Scheduler job whose request carries a
+    verified OIDC token for the scheduler service account (see
+    ``workforce.scheduler_auth``). This replaces an always-running scheduler
+    process: the work is a single idempotent, concurrency-safe sweep.
+
+    The endpoint takes **no input** — it never reads a user id or timestamp from
+    the request, and always reconciles against ``timezone.now()`` for every open
+    session. Normal users, admins in the browser, and anonymous callers cannot
+    authenticate and are rejected.
+    """
+
+    # Governed entirely by the OIDC gate below — DRF's JWT auth, permissions, and
+    # throttles do not apply (a user's SimpleJWT must never authorise this).
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+    throttle_classes: list = []
+
+    def post(self, request):
+        try:
+            authenticate_scheduler(request)
+        except SchedulerAuthError as exc:
+            if exc.code != "missing_token":
+                # Missing token is routine noise; log genuine rejections.
+                logger.warning("Scheduler reconcile rejected: %s", exc.code)
+            return Response(
+                {"detail": exc.message, "code": exc.code},
+                status=_SCHEDULER_ERROR_STATUS.get(exc.code, status.HTTP_403_FORBIDDEN),
+            )
+
+        # Deliberately ignores request body/query entirely.
+        result = close_stale_sessions()
+        return Response(
+            {
+                "status": "ok",
+                "inspected": result["inspected"],
+                "closed": result["closed"],
+                "at": result["at"],
+            }
+        )

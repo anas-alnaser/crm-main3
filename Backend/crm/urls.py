@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.urls import include, path, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -21,7 +21,7 @@ from branding.views import (
     SignatoryViewSet,
 )
 from clients.views import ClientViewSet
-from crm.views import DashboardStatsView, GlobalSearchView, HealthView
+from crm.views import DashboardStatsView, GlobalSearchView, HealthView, serve_stored_media
 from leads.views import LeadImportBatchViewSet, LeadViewSet
 from meetings.views import MeetingViewSet
 from projects.views import ProjectViewSet
@@ -29,6 +29,7 @@ from sales.views import CommissionView, DealViewSet, LeaderboardView, PipelineVi
 from tasks.views import TaskViewSet
 from workforce.views import (
     EmployeeWorkPolicyViewSet,
+    SchedulerReconcileView,
     ShiftEndPreviewView,
     ShiftEndView,
     ShiftHeartbeatView,
@@ -92,8 +93,23 @@ urlpatterns = [
     path("api/workforce/employees/", WorkforceEmployeesView.as_view(), name="workforce_employees"),
     # Audit telemetry
     path("api/telemetry/", FrontendTelemetryView.as_view(), name="frontend_telemetry"),
+    # Internal: closed-loop work-session reconciliation. Called once a minute by
+    # Google Cloud Scheduler with a verified OIDC token; not part of the public
+    # API and never invokable by users, admins, or anonymous callers.
+    path(
+        "internal/workforce/reconcile/",
+        SchedulerReconcileView.as_view(),
+        name="workforce_reconcile",
+    ),
     path("api/", include(router.urls)),
 ]
 
-if settings.DEBUG:
+# Uploaded media (brand logos, signatures). In production these live in the
+# database (durable across Cloud Run's ephemeral filesystem) and are served by
+# serve_stored_media; local development uses the on-disk MEDIA_ROOT.
+if getattr(settings, "MEDIA_USE_DATABASE", False):
+    urlpatterns += [
+        re_path(r"^media/(?P<name>.+)$", serve_stored_media, name="stored_media"),
+    ]
+elif settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

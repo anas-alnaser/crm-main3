@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     "workforce",
     "leads",
     "branding",
+    "mediastore",
 ]
 
 MIDDLEWARE = [
@@ -138,6 +139,12 @@ STORAGES = {
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# CORS — the SPA (Cloudflare Pages) is a different origin from the API (Cloud
+# Run), so its exact HTTPS origin(s) must be listed here in production, e.g.
+# CORS_ALLOWED_ORIGINS=https://crm.pages.dev,https://crm.example.com
+# The origin list is always explicit; the wildcard "allow all" mode is never
+# enabled. Auth uses bearer JWTs in the Authorization header (not cookies), so
+# credentialed CORS stays off unless explicitly turned on.
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in env(
@@ -146,6 +153,8 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOW_CREDENTIALS = env("CORS_ALLOW_CREDENTIALS", "False").lower() == "true"
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -198,12 +207,30 @@ WORKFORCE_DEFAULT_START_TIME = env("WORKFORCE_DEFAULT_START_TIME", "09:00")
 WORKFORCE_DEFAULT_END_TIME = env("WORKFORCE_DEFAULT_END_TIME", "21:00")
 WORKFORCE_DEFAULT_DAILY_TARGET_MINUTES = int(env("WORKFORCE_DEFAULT_DAILY_TARGET_MINUTES", "180"))
 
-# --- Media / uploaded assets (brand logos, signatures, retained lead files) ---
-# Local filesystem storage in development. Production must mount persistent
-# storage or configure an object-storage backend (see docs/DEPLOYMENT.md and
-# crm/storage.py); an ephemeral container filesystem is not sufficient.
+# --- Scheduler reconciliation endpoint (Google Cloud Scheduler) ---
+# POST /internal/workforce/reconcile/ closes stale work sessions once a minute.
+# It authenticates the caller with the OIDC token Cloud Scheduler attaches:
+#   WORKFORCE_SCHEDULER_AUDIENCE         must equal the job's --oidc-token-audience
+#   WORKFORCE_SCHEDULER_SERVICE_ACCOUNT  the scheduler service account email
+# Both must be set for the endpoint to run; unset -> the endpoint returns 503,
+# so it is safely inert until deployment configures it.
+WORKFORCE_SCHEDULER_AUDIENCE = env("WORKFORCE_SCHEDULER_AUDIENCE", "")
+WORKFORCE_SCHEDULER_SERVICE_ACCOUNT = env("WORKFORCE_SCHEDULER_SERVICE_ACCOUNT", "")
+
+# --- Media / uploaded assets (brand logos, signatures) ---
+# Cloud Run's filesystem is ephemeral and per-instance, so uploaded logos and
+# signatures must NOT live on disk in production. By default they are persisted
+# in the primary database (Supabase PostgreSQL) via crm.storage.DatabaseStorage
+# and served by crm.views.serve_stored_media — durable with zero extra cost or
+# infrastructure. Local development keeps simple on-disk storage. Override with
+# MEDIA_STORAGE_BACKEND=filesystem|database. (Generated documents never touch the
+# filesystem — they are database rows plus an immutable JSON snapshot.)
 MEDIA_URL = env("MEDIA_URL", "/media/")
 MEDIA_ROOT = BASE_DIR / "media"
+_media_backend = env("MEDIA_STORAGE_BACKEND", "filesystem" if DEBUG else "database").strip().lower()
+MEDIA_USE_DATABASE = _media_backend == "database"
+if MEDIA_USE_DATABASE:
+    STORAGES["default"]["BACKEND"] = "crm.storage.DatabaseStorage"
 # Hard caps enforced when validating uploads (bytes / pixels).
 UPLOAD_MAX_IMAGE_BYTES = int(env("UPLOAD_MAX_IMAGE_BYTES", str(5 * 1024 * 1024)))
 UPLOAD_MAX_IMAGE_DIMENSION = int(env("UPLOAD_MAX_IMAGE_DIMENSION", "4000"))

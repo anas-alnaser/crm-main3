@@ -1,8 +1,15 @@
 # Deployment guide
 
-The production stack runs four containers: PostgreSQL, the Django API (gunicorn),
-the React SPA (nginx, which also proxies `/api` to the API), and a lightweight
-**scheduler** that closes stale work sessions ~once per minute.
+> **Deploying serverless / near‑zero‑cost?** For Google Cloud Run (Django) +
+> Cloudflare Pages (SPA) + the existing Supabase database + a Cloud Scheduler
+> minute job, follow [CLOUD_RUN_DEPLOYMENT.md](CLOUD_RUN_DEPLOYMENT.md) instead —
+> it replaces the always‑running scheduler container below with a single
+> authenticated `/internal/workforce/reconcile/` call.
+
+This guide covers the self‑hosted Docker Compose stack. The production stack runs
+four containers: PostgreSQL, the Django API (gunicorn), the React SPA (nginx,
+which also proxies `/api` to the API), and a lightweight **scheduler** that
+closes stale work sessions ~once per minute.
 
 ## 1. Configure
 

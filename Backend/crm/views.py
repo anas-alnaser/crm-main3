@@ -3,7 +3,9 @@ from decimal import Decimal
 from django.db import connection
 from django.db.models import Count, DecimalField, Q, Sum, Value
 from django.db.models.functions import Coalesce
+from django.http import Http404, HttpResponse
 from django.utils import timezone
+from django.views.decorators.cache import cache_control
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,6 +33,27 @@ class HealthView(APIView):
         except Exception:  # pragma: no cover - defensive
             db_ok = False
         return Response({"status": "ok" if db_ok else "degraded", "database": db_ok})
+
+
+@cache_control(public=True, max_age=3600)
+def serve_stored_media(request, name):
+    """Serve an uploaded asset (logo / signature) from the database.
+
+    Production stores media in Postgres (see ``crm.storage.DatabaseStorage``),
+    so it is served here rather than off the container's ephemeral filesystem.
+    Matches the previous ``/media/`` public-read behaviour; the asset bytes are
+    not sensitive credentials and the URL is required by ``<img>`` tags that
+    cannot send an Authorization header.
+    """
+    from mediastore.models import StoredFile
+
+    row = StoredFile.objects.filter(name=name).only("content", "content_type").first()
+    if row is None:
+        raise Http404("Asset not found.")
+    return HttpResponse(
+        bytes(row.content),
+        content_type=row.content_type or "application/octet-stream",
+    )
 
 
 def _visible_deals(user):

@@ -1,0 +1,9 @@
+{
+  // Cloudflare Pages project config for the CRM SPA.
+  // Used by `npx wrangler pages deploy dist` (see docs/CLOUD_RUN_DEPLOYMENT.md).
+  // No secrets here: the only build-time variable is the PUBLIC API base URL,
+  // set as a Pages environment variable (VITE_API_BASE_URL), never in this file.
+  "name": "morph-fuel-crm",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2026-07-31"
+}
