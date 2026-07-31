@@ -4,10 +4,14 @@ import { AdminRoute } from "./components/AdminRoute";
 import { DashboardLayout } from "./components/DashboardLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { ActivitiesPage } from "./pages/ActivitiesPage";
+import { AuditLogPage } from "./pages/AuditLogPage";
+import { BrandProfilesPage } from "./pages/BrandProfilesPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { DealsPage } from "./pages/DealsPage";
 import { LeaderboardPage } from "./pages/LeaderboardPage";
+import { LeadsPage } from "./pages/LeadsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MyShiftPage } from "./pages/MyShiftPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { PipelinePage } from "./pages/PipelinePage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -15,6 +19,7 @@ import { SchedulePage } from "./pages/SchedulePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TasksPage } from "./pages/TasksPage";
 import { UsersPage } from "./pages/UsersPage";
+import { WorkforcePage } from "./pages/WorkforcePage";
 
 export default function App() {
   return (
@@ -31,9 +36,14 @@ export default function App() {
           <Route path="/schedule" element={<SchedulePage />} />
           <Route path="/activities" element={<ActivitiesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />
+          <Route path="/my-shift" element={<MyShiftPage />} />
+          <Route path="/leads" element={<LeadsPage />} />
           <Route element={<AdminRoute />}>
             <Route path="/users" element={<UsersPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/workforce" element={<WorkforcePage />} />
+            <Route path="/audit" element={<AuditLogPage />} />
+            <Route path="/brands" element={<BrandProfilesPage />} />
           </Route>
         </Route>
       </Route>

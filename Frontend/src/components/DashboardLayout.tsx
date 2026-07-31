@@ -13,12 +13,17 @@ import {
   Menu,
   MessageSquare,
   Moon,
+  Palette,
+  PhoneCall,
+  ScrollText,
   Search,
   Settings,
   Sun,
+  Timer,
   Trophy,
   UserCog,
   Users,
+  UsersRound,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +38,7 @@ import { Skeleton } from "./ui/skeleton";
 import { apiRequest } from "../api/client";
 import type { GlobalSearchResponse, SearchResults } from "../api/types";
 import { useAuth } from "../lib/auth";
+import { usePresence } from "../lib/presence";
 import { useTheme } from "../lib/theme";
 import { cn } from "../lib/utils";
 
@@ -41,13 +47,18 @@ const sharedNavItems = [
   { to: "/", label: "Pipeline", icon: Columns3 },
   { to: "/deals", label: "Deals", icon: DollarSign },
   { to: "/clients", label: "Companies", icon: Users },
+  { to: "/leads", label: "Leads", icon: PhoneCall },
   { to: "/tasks", label: "Tasks", icon: CheckSquare },
   { to: "/schedule", label: "Schedule", icon: CalendarClock },
   { to: "/activities", label: "Activities", icon: MessageSquare },
   { to: "/leaderboard", label: "Leaderboard", icon: Trophy },
+  { to: "/my-shift", label: "My Shift", icon: Timer },
 ];
 
 const adminNavItems = [
+  { to: "/workforce", label: "Workforce", icon: UsersRound },
+  { to: "/audit", label: "Audit Log", icon: ScrollText },
+  { to: "/brands", label: "Brand Profiles", icon: Palette },
   { to: "/users", label: "Users", icon: UserCog },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -101,8 +112,8 @@ export function DashboardLayout() {
       >
         <div className="mb-8 flex items-center justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Fueldezign</p>
-            <h1 className="mt-1 text-2xl font-semibold leading-none">CRM</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-primary">Fuel × Morph</p>
+            <h1 className="mt-1 text-2xl font-semibold leading-none">Workspace</h1>
           </div>
           <Button aria-label="Close navigation" className="lg:hidden" size="icon" type="button" variant="ghost" onClick={() => setIsSidebarOpen(false)}>
             <X className="h-4 w-4" />
@@ -206,9 +217,27 @@ export function DashboardLayout() {
           </div>
         </header>
         {user?.role === "admin" && <AICommandBar />}
+        <ShiftBanner />
         <main className="min-w-0 flex-1 px-4 py-6 lg:px-8 lg:py-8">
           <Outlet />
         </main>
+      </div>
+    </div>
+  );
+}
+
+function ShiftBanner() {
+  const { status } = usePresence();
+  const location = useLocation();
+  if (!status?.shift_tracking_required || status.on_shift || location.pathname === "/my-shift") {
+    return null;
+  }
+  return (
+    <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-600 dark:text-amber-400 lg:px-8">
+      <div className="mx-auto flex max-w-[1440px] items-center gap-2">
+        <Timer className="h-4 w-4 shrink-0" />
+        <span>You are off shift — the CRM is read-only until you start a shift.</span>
+        <NavLink to="/my-shift" className="ml-auto font-semibold underline underline-offset-2">Go to My Shift</NavLink>
       </div>
     </div>
   );

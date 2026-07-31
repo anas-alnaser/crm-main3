@@ -237,3 +237,218 @@ export type SearchResults = {
 };
 
 export type GlobalSearchResponse = { query: string; results: SearchResults };
+
+// --- Workforce / shift ---
+export type ShiftTotals = {
+  date: string;
+  credited_seconds: number;
+  credited_display: string;
+  target_seconds: number;
+  target_display: string;
+  remaining_seconds: number;
+  remaining_display: string;
+  overtime_seconds: number;
+  overtime_display: string;
+  session_count: number;
+};
+
+export type ShiftStatus = {
+  shift_tracking_required: boolean;
+  on_shift: boolean;
+  server_time: string;
+  local_time: string;
+  today: string;
+  reason: string;
+  can_start: boolean;
+  totals: ShiftTotals;
+  policy?: {
+    timezone: string;
+    earliest_start_time: string;
+    latest_end_time: string;
+    daily_target_minutes: number;
+    working_days: number[];
+    working_day_labels: string[];
+    overtime_allowed: boolean;
+  };
+  window?: { is_working_day: boolean; start_time: string; end_time: string };
+  session?: {
+    id: number;
+    started_at: string;
+    last_activity_at: string;
+    work_date: string;
+    current_session_seconds: number;
+    current_session_display: string;
+  };
+  last_auto_closure?: { reason: string; reason_display: string; ended_at: string };
+};
+
+export type ShiftEndPreview = {
+  employee_name: string;
+  message: string;
+  current_session_seconds: number;
+  current_session_display: string;
+  credited_seconds_today: number;
+  credited_display_today: string;
+  target_display: string;
+  remaining_display: string;
+  overtime_display: string;
+  session_count: number;
+};
+
+export type WorkPolicy = {
+  id: number;
+  user: number;
+  username: string;
+  employee_name: string;
+  shift_tracking_required: boolean;
+  is_active: boolean;
+  timezone: string;
+  working_days: number[];
+  working_day_labels: string[];
+  earliest_start_time: string;
+  latest_end_time: string;
+  daily_target_minutes: number;
+  monthly_target_minutes: number | null;
+  basic_salary: string | null;
+  salary_currency: string;
+  overtime_allowed: boolean;
+};
+
+// --- Leads ---
+export type LeadStatus = "new" | "contacted" | "no_answer" | "follow_up" | "interested" | "not_interested" | "converted";
+
+export type Lead = {
+  id: number;
+  batch: number | null;
+  name: string;
+  original_phone: string;
+  normalized_phone: string;
+  source: string;
+  notes: string;
+  assigned_to: number | null;
+  assigned_to_name: string | null;
+  status: LeadStatus;
+  status_display: string;
+  is_terminal: boolean;
+  follow_up_at: string | null;
+  first_viewed_at: string | null;
+  converted_client: number | null;
+  converted_deal: number | null;
+  converted_at: string | null;
+  reopened_reason: string;
+  contact_attempt_count: number;
+  created_at: string;
+};
+
+export type LeadContactAttempt = {
+  id: number;
+  lead: number;
+  employee: number | null;
+  employee_username?: string;
+  created_at: string;
+  method: string;
+  outcome: string;
+  notes: string;
+  follow_up_at: string | null;
+  resulting_status: string;
+};
+
+export type LeadImportBatch = {
+  id: number;
+  source: string;
+  original_filename: string;
+  uploaded_by_username?: string;
+  assigned_to: number | null;
+  assigned_to_username?: string;
+  uploaded_at: string;
+  status: string;
+  total_rows: number;
+  imported_count: number;
+  invalid_count: number;
+  duplicate_count: number;
+  skipped_count: number;
+  assigned_count: number;
+};
+
+// --- Audit ---
+export type AuditEvent = {
+  id: number;
+  created_at: string;
+  user: number | null;
+  user_username: string | null;
+  work_session: number | null;
+  action: string;
+  category: string;
+  category_display: string;
+  source: string;
+  entity_type: string;
+  entity_id: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+  old_values: Record<string, unknown>;
+  new_values: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string;
+};
+
+// --- Branding ---
+export type BrandProfile = {
+  id: number;
+  key: string;
+  legal_entity: number;
+  legal_name: string;
+  display_name: string;
+  logo_url: string | null;
+  accent_color: string;
+  secondary_color: string;
+  website: string;
+  public_email: string;
+  service_category: string;
+  document_prefix: string;
+  default_signatory: number | null;
+  is_active: boolean;
+};
+
+export type LegalEntity = {
+  id: number;
+  key: string;
+  legal_name: string;
+  registration_number: string;
+  tax_number: string;
+  address: string;
+  phone: string;
+  email: string;
+  website: string;
+  bank_details: string;
+  owner_name: string;
+  owner_title: string;
+  legal_terms: string;
+  is_active: boolean;
+};
+
+export type GeneratedDocument = {
+  id: number;
+  document_type: string;
+  document_type_display: string;
+  document_number: string;
+  brand: number;
+  brand_name: string;
+  legal_name: string;
+  client: number | null;
+  amount: string | null;
+  currency: string;
+  status: string;
+  created_at: string;
+  snapshot: Record<string, unknown> | null;
+};
+
+// --- Workforce dashboard ---
+export type WorkforceDashboard = {
+  employee: { id: number; username: string; name: string };
+  period: { start: string; end: string };
+  work: Record<string, unknown>;
+  leads: Record<string, unknown>;
+  crm: Record<string, unknown>;
+  salary: Record<string, unknown>;
+  daily: Array<Record<string, unknown>>;
+};

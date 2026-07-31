@@ -117,3 +117,26 @@ export const patchEntity = <T>(resource: string, id: number, data: unknown) =>
 
 export const deleteEntity = (resource: string, id: number) =>
   apiRequest<void>(`/${resource}/${id}/`, { method: "DELETE" });
+
+/** Upload multipart form data (e.g. an .xlsx lead import) with the bearer token. */
+export async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const token = localStorage.getItem("accessToken");
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    // No Content-Type header: the browser sets the multipart boundary.
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: form,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Upload failed with status ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Fire-and-forget supplemental UI telemetry. Never throws to the caller. */
+export function sendTelemetry(action: string, payload: { entity_type?: string; entity_id?: string; metadata?: Record<string, unknown> } = {}): void {
+  apiRequest("/telemetry/", { method: "POST", body: JSON.stringify({ action, ...payload }) }).catch(() => {
+    /* telemetry is best-effort; ignore failures */
+  });
+}
