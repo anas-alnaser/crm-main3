@@ -29,6 +29,9 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+# Secret-free example for the Supabase connection (safe to commit). The real
+# credentials live in .env.supabase.local, which stays ignored by .env.*
+!.env.supabase.example
 
 # OS and editors
 .DS_Store

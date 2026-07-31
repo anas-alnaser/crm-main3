@@ -5,10 +5,14 @@ Django==5.2.16
 django-cors-headers==4.9.0
 django-filter==24.3
 django-unfold==0.102.0
+dj-database-url==3.1.2
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
+et-xmlfile==2.0.0
 gunicorn==26.0.0
+openpyxl==3.1.5
 packaging==26.2
+pillow==11.3.0
 psycopg==3.3.4
 psycopg-binary==3.3.4
 PyJWT==2.13.0
