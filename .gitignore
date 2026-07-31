@@ -17,6 +17,7 @@ node_modules/
 dist/
 build/
 .vite/
+.wrangler/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

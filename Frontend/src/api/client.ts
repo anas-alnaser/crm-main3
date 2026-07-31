@@ -1,4 +1,9 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+// The API base URL is injected at build time from the public VITE_API_BASE_URL
+// build variable (e.g. the Cloud Run API origin). Fall back to localhost only in
+// dev/test so a production build can never silently ship a localhost origin: if
+// the variable is missing in a prod build we use a same-origin relative "/api".
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? "http://localhost:8000/api" : "/api");
 
 export type LoginResponse = {
   access: string;

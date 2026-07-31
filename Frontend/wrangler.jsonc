@@ -1,9 +1,17 @@
 {
-  // Cloudflare Pages project config for the CRM SPA.
-  // Used by `npx wrangler pages deploy dist` (see docs/CLOUD_RUN_DEPLOYMENT.md).
+  // Cloudflare Workers static-assets config for the CRM SPA.
+  // Deployed with `npx wrangler deploy` from this Frontend/ directory.
+  // Serves the compiled Vite output in ./dist (never the raw source).
   // No secrets here: the only build-time variable is the PUBLIC API base URL,
-  // set as a Pages environment variable (VITE_API_BASE_URL), never in this file.
+  // set as a Cloudflare Build variable (VITE_API_BASE_URL), never in this file.
+  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "morph-fuel-crm",
-  "pages_build_output_dir": "dist",
-  "compatibility_date": "2026-07-31"
+  "compatibility_date": "2026-07-31",
+  "assets": {
+    // Relative to this file (Frontend/), i.e. Frontend/dist — the Vite build output.
+    "directory": "./dist",
+    // SPA fallback: unmatched routes (e.g. /leads) return index.html so the
+    // client-side router can handle them instead of a 404.
+    "not_found_handling": "single-page-application"
+  }
 }
