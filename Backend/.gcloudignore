@@ -1,0 +1,19 @@
+# Keep Cloud Run `--source Backend` uploads lean and deterministic (independent
+# of gcloud's .gitignore fallback). Mirrors Backend/.dockerignore. Nothing here
+# is needed to build the image; requirements.txt drives the venv inside Docker.
+.venv
+venv
+__pycache__
+*.pyc
+*.sqlite3
+db.sqlite3
+.env
+.env.*
+!.env.example
+staticfiles
+media
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+.git
