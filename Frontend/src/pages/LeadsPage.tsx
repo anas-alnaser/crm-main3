@@ -1,17 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { PhoneCall, Upload, UserCheck } from "lucide-react";
+import { PhoneCall, Trash2, Upload, UserCheck } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { PageHeader } from "../components/PageHeader";
+import { PermanentDeleteDialog, type PermanentDeleteConfirm } from "../components/PermanentDeleteDialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { EmptyState } from "../components/ui/empty-state";
 import { Input } from "../components/ui/input";
 import { Select } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
-import { apiRequest, fetchList, sendTelemetry, uploadForm } from "../api/client";
-import type { Lead, LeadContactAttempt, User } from "../api/types";
+import { apiErrorMessage, apiRequest, fetchList, sendTelemetry, uploadForm } from "../api/client";
+import type { Lead, LeadContactAttempt, LeadDeleteImpact, User } from "../api/types";
 import { useAuth } from "../lib/auth";
+import { isSuperAdmin } from "../lib/superadmin";
 import { useToast } from "../lib/toast";
 
 const STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" | "info"> = {
@@ -30,10 +32,12 @@ const SETTABLE_STATUSES = ["contacted", "no_answer", "follow_up", "interested", 
 export function LeadsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const superadmin = isSuperAdmin(user);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [statusFilter, setStatusFilter] = useState("");
   const [selected, setSelected] = useState<Lead | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Lead | null>(null);
 
   const leadsQuery = useQuery({
     queryKey: ["leads", statusFilter],
@@ -93,7 +97,19 @@ export function LeadsPage() {
                   {isAdmin && <td className="px-4 py-3 text-muted-foreground">{lead.assigned_to_name ?? "—"}</td>}
                   <td className="px-4 py-3 text-muted-foreground">{lead.follow_up_at ? new Date(lead.follow_up_at).toLocaleString() : "—"}</td>
                   <td className="px-4 py-3 text-right">
-                    <Button size="sm" variant="outline" onClick={() => openLead(lead)}>Open</Button>
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openLead(lead)}>Open</Button>
+                      {superadmin && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          onClick={() => setDeleteTarget(lead)}
+                          aria-label={`Delete permanently ${lead.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Delete permanently
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -105,7 +121,90 @@ export function LeadsPage() {
       )}
 
       {selected && <LeadDrawer lead={selected} isAdmin={isAdmin} onClose={() => setSelected(null)} onChanged={() => { refresh(); }} showToast={showToast} />}
+
+      {deleteTarget && (
+        <LeadPermanentDeleteFlow
+          lead={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            setSelected(null);
+            refresh();
+            showToast("Lead permanently deleted.", "success");
+          }}
+          showToast={showToast}
+        />
+      )}
     </div>
+  );
+}
+
+function LeadPermanentDeleteFlow({
+  lead,
+  onClose,
+  onDeleted,
+  showToast,
+}: {
+  lead: Lead;
+  onClose: () => void;
+  onDeleted: () => void;
+  showToast: (m: string, t?: "success" | "error" | "info") => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const impactQuery = useQuery({
+    queryKey: ["lead-delete-impact", lead.id],
+    queryFn: () => apiRequest<LeadDeleteImpact>(`/leads/${lead.id}/delete-impact/`),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ password }: PermanentDeleteConfirm) =>
+      apiRequest<{ deleted_lead_id: number }>(`/leads/${lead.id}/permanent-delete/`, {
+        method: "POST",
+        body: JSON.stringify({ current_password: password, confirmation: "DELETE LEAD", lead_id: lead.id }),
+      }),
+    onSuccess: () => onDeleted(),
+    onError: (err) => {
+      // Clear the password state (handled inside the dialog) and show the real
+      // backend error without claiming success.
+      setError(apiErrorMessage(err, "Could not delete lead."));
+      showToast(apiErrorMessage(err, "Could not delete lead."), "error");
+    },
+  });
+
+  const impact = impactQuery.data;
+  const allowed = impact ? impact.deletion_allowed : false;
+
+  return (
+    <PermanentDeleteDialog
+      open
+      title="Delete lead permanently"
+      phrase="DELETE LEAD"
+      allowed={allowed}
+      blockedReason={impact?.blocked_reason}
+      loadingImpact={impactQuery.isLoading}
+      idConfirmLabel={impact ? `I confirm this is lead #${impact.lead_id}.` : undefined}
+      submitLabel="Permanently delete lead"
+      error={error}
+      submitting={deleteMutation.isPending}
+      onCancel={onClose}
+      onConfirm={(data) => {
+        setError(null);
+        deleteMutation.mutate(data);
+      }}
+    >
+      {impact ? (
+        <div className="rounded-md border border-border bg-muted/40 p-3">
+          <p><span className="text-muted-foreground">Lead ID:</span> {impact.lead_id}</p>
+          <p><span className="text-muted-foreground">Name:</span> {impact.name}</p>
+          <p><span className="text-muted-foreground">Status:</span> {impact.status_display}</p>
+          <p><span className="text-muted-foreground">Converted:</span> {impact.is_converted ? "Yes" : "No"}</p>
+          <p><span className="text-muted-foreground">Contact attempts:</span> {impact.contact_attempt_count}</p>
+        </div>
+      ) : impactQuery.isError ? (
+        <p className="text-red-500">{apiErrorMessage(impactQuery.error, "Could not load lead impact.")}</p>
+      ) : null}
+    </PermanentDeleteDialog>
   );
 }
 

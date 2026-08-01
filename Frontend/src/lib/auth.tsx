@@ -8,6 +8,8 @@ type AuthContextValue = {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  /** Re-fetch the current user from /auth/me/ (e.g. after a full CRM reset). */
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -47,6 +49,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("accessToken");
         localStorage.removeItem("refreshToken");
         setUser(null);
+      },
+      refreshUser: async () => {
+        const currentUser = await apiRequest<User>("/auth/me/");
+        setUser(currentUser);
       },
     }),
     [isLoading, user],

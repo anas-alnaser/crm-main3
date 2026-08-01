@@ -29,6 +29,21 @@ class APITestBase(APITestCase):
         )
 
     @staticmethod
+    def make_superadmin(username="superadmin", **kwargs):
+        """A full superadmin: active + staff + Django superuser + role=admin.
+
+        This is the only account permitted to use the permanent-delete and
+        full-reset endpoints (see accounts.permissions.is_super_admin)."""
+        return User.objects.create_user(
+            username=username,
+            password=kwargs.pop("password", "superpass123"),
+            role=User.Role.ADMIN,
+            is_staff=True,
+            is_superuser=True,
+            **kwargs,
+        )
+
+    @staticmethod
     def make_sales(username="sales", **kwargs):
         return User.objects.create_user(
             username=username,

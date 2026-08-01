@@ -7,9 +7,11 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 
 from accounts.models import User
-from accounts.permissions import IsAdminRole
+from accounts.permissions import IsAdminRole, IsSuperAdmin
 from audit.models import AuditCategory
 from audit.services import record_event
+from crm import danger
+from crm.throttling import DangerZoneThrottle
 from workforce.permissions import ShiftRequiredForWrite
 from workforce.services import active_session
 
@@ -207,6 +209,125 @@ class LeadViewSet(ModelViewSet):
         except LeadError as exc:
             return Response({"detail": exc.message, "code": exc.code}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(lead).data)
+
+    # -- Superadmin-only permanent deletion --------------------------------
+    # Normal admins and sales users can never permanently delete a lead (the
+    # standard DELETE stays 405 above). A superadmin may irreversibly delete a
+    # single *non-converted* lead after re-authenticating and typing the exact
+    # confirmation phrase. Converted leads are always protected because they are
+    # linked to business records (client/deal).
+
+    @staticmethod
+    def _conversion_block(lead):
+        """Return a safe reason string if the lead may NOT be permanently
+        deleted (because it is converted / linked to business records), else
+        ``None``."""
+        if (
+            lead.status == LeadStatus.CONVERTED
+            or lead.converted_client_id is not None
+            or lead.converted_deal_id is not None
+            or lead.converted_at is not None
+        ):
+            return (
+                "Converted leads cannot be permanently deleted because they are "
+                "linked to business records."
+            )
+        return None
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="delete-impact",
+        permission_classes=[IsSuperAdmin],
+        throttle_classes=[DangerZoneThrottle],
+    )
+    def delete_impact(self, request, pk=None):
+        """Read-only impact summary for a permanent lead deletion.
+
+        Returns only safe metadata (never the phone number, notes, or contact-
+        attempt content) and performs no writes."""
+        lead = self.get_object()
+        block_reason = self._conversion_block(lead)
+        return Response(
+            {
+                "lead_id": lead.id,
+                "name": lead.name,
+                "status": lead.status,
+                "status_display": lead.get_status_display(),
+                "is_converted": block_reason is not None,
+                "contact_attempt_count": lead.contact_attempts.count(),
+                "deletion_allowed": block_reason is None,
+                "blocked_reason": block_reason,
+                "confirmation_phrase": "DELETE LEAD",
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="permanent-delete",
+        permission_classes=[IsSuperAdmin],
+        throttle_classes=[DangerZoneThrottle],
+    )
+    def permanent_delete(self, request, pk=None):
+        lead = self.get_object()
+
+        # Re-authenticate + exact confirmation + id match (all server-side).
+        guard = (
+            danger.check_password(request)
+            or danger.check_confirmation(request, "DELETE LEAD")
+            or danger.check_id_matches(request, "lead_id", lead.id)
+        )
+        if guard is not None:
+            return guard
+
+        # Block converted leads by default (before taking the lock, and again
+        # inside it after the revalidation re-read).
+        block_reason = self._conversion_block(lead)
+        if block_reason is not None:
+            return danger.error(block_reason, "converted_lead", status.HTTP_409_CONFLICT)
+
+        with transaction.atomic():
+            # Lock the row; a concurrent permanent-delete blocks here and then
+            # finds the lead already gone.
+            locked = Lead.objects.select_for_update().filter(pk=lead.id).first()
+            if locked is None:
+                return danger.error("Lead not found (already deleted).", "not_found", status.HTTP_404_NOT_FOUND)
+
+            # Revalidate conversion state under the lock so a race cannot slip a
+            # just-converted lead through.
+            block_reason = self._conversion_block(locked)
+            if block_reason is not None:
+                return danger.error(block_reason, "converted_lead", status.HTTP_409_CONFLICT)
+
+            deleted_attempts = locked.contact_attempts.count()
+            deleted_lead_id = locked.id
+            # Delete related contact attempts explicitly, then the lead. We do
+            # NOT touch the import batch, converted client/deal, users, or work
+            # sessions (all of those are held by other rows via SET_NULL and are
+            # preserved).
+            locked.contact_attempts.all().delete()
+            locked.delete()
+
+            record_event(
+                action="lead.permanently_deleted",
+                category=AuditCategory.LEAD,
+                user=request.user,
+                request=request,
+                entity_type="Lead",
+                entity_id=deleted_lead_id,
+                summary=f"Lead #{deleted_lead_id} permanently deleted by superadmin.",
+                # Safe metadata only — never the phone, notes, or attempt content.
+                metadata={"deleted_contact_attempts": deleted_attempts},
+            )
+
+        return Response(
+            {
+                "detail": "Lead permanently deleted.",
+                "deleted_lead_id": deleted_lead_id,
+                "deleted_contact_attempts": deleted_attempts,
+            }
+        )
 
     @action(detail=True, methods=["patch"], url_path="assign", permission_classes=[IsAuthenticated, IsAdminRole])
     def assign(self, request, pk=None):

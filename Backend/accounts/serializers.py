@@ -6,10 +6,15 @@ from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.ChoiceField(choices=User.Role.choices, read_only=True)
+    # Safe booleans only. The frontend uses is_staff + is_superuser + role to
+    # decide whether to render superadmin-only destructive controls; the server
+    # re-enforces every such action, so these never grant access on their own.
+    # Password hashes, permission internals, and tokens are never exposed.
+    is_superuser = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
-        fields = ["id", "username", "email", "first_name", "last_name", "is_staff", "is_active", "role"]
+        fields = ["id", "username", "email", "first_name", "last_name", "is_staff", "is_superuser", "is_active", "role"]
 
 
 class PasswordResetSerializer(serializers.Serializer):

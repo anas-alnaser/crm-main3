@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from rest_framework import status
 from rest_framework.decorators import action
@@ -10,8 +11,9 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 
 from audit.models import AuditCategory
 from audit.services import record_event
-from crm.throttling import LoginRateThrottle
-from .permissions import IsAdminRole
+from crm import danger
+from crm.throttling import DangerZoneThrottle, LoginRateThrottle
+from .permissions import IsAdminRole, IsSuperAdmin, is_super_admin
 from .models import User
 from .serializers import (
     PasswordResetSerializer,
@@ -144,3 +146,154 @@ class UserViewSet(ModelViewSet):
         user.save(update_fields=["password"])
         # Never echo the password back.
         return Response({"detail": "Password reset.", "id": user.id})
+
+    # -- Superadmin-only permanent deletion --------------------------------
+    # Deactivate/Reactivate above remain the normal behaviour. A superadmin may
+    # permanently delete *another* user (never themselves) after re-authenticating.
+    # Ownership references are inspected first: SET_NULL fields are cleared by the
+    # ORM; PROTECT references (owned deals, meetings, AI-command logs) block the
+    # deletion until they are reassigned, so a ProtectedError can never occur.
+
+    @staticmethod
+    def _ownership_impact(user) -> dict:
+        return {
+            # PROTECT — must be reassigned before the user can be deleted.
+            "owned_deals": user.deals.count(),
+            "owned_meetings": user.meetings.count(),
+            "ai_command_logs": user.ai_command_logs.count(),
+            # CASCADE — removed with the user.
+            "work_sessions": user.work_sessions.count(),
+            "has_work_policy": hasattr(user, "work_policy"),
+            # SET_NULL — detached (authorship history is anonymised, not deleted).
+            "created_leads": user.created_leads.count(),
+            "assigned_leads": user.assigned_leads.count(),
+            "created_clients": user.created_clients.count(),
+            "created_projects": user.created_projects.count(),
+            "created_tasks": user.created_tasks.count(),
+            "created_activities": user.created_activities.count(),
+        }
+
+    @classmethod
+    def _protect_blockers(cls, impact) -> list:
+        blockers = []
+        if impact["owned_deals"]:
+            blockers.append(f"{impact['owned_deals']} owned deal(s)")
+        if impact["owned_meetings"]:
+            blockers.append(f"{impact['owned_meetings']} owned meeting(s)")
+        if impact["ai_command_logs"]:
+            blockers.append(f"{impact['ai_command_logs']} AI command log(s)")
+        return blockers
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="delete-impact",
+        permission_classes=[IsSuperAdmin],
+        throttle_classes=[DangerZoneThrottle],
+    )
+    def delete_impact(self, request, pk=None):
+        user = self.get_object()
+        is_self = user.id == request.user.id
+        impact = self._ownership_impact(user)
+        blockers = self._protect_blockers(impact)
+        reason = None
+        if is_self:
+            reason = "You cannot permanently delete your own account."
+        elif blockers:
+            reason = (
+                "This user still owns protected records that must be reassigned "
+                "first: " + ", ".join(blockers) + "."
+            )
+        return Response(
+            {
+                "user_id": user.id,
+                "username": user.username,
+                "role": user.role,
+                "is_active": user.is_active,
+                "is_self": is_self,
+                "impact": impact,
+                "protect_blockers": blockers,
+                "deletion_allowed": reason is None,
+                "blocked_reason": reason,
+                "confirmation_phrase": "DELETE USER",
+            }
+        )
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="permanent-delete",
+        permission_classes=[IsSuperAdmin],
+        throttle_classes=[DangerZoneThrottle],
+    )
+    def permanent_delete(self, request, pk=None):
+        target = self.get_object()
+
+        if target.id == request.user.id:
+            return danger.error(
+                "You cannot permanently delete your own account.", "self_delete", status.HTTP_400_BAD_REQUEST
+            )
+
+        guard = (
+            danger.check_password(request)
+            or danger.check_confirmation(request, "DELETE USER")
+            or danger.check_id_matches(request, "user_id", target.id)
+        )
+        if guard is not None:
+            return guard
+
+        with transaction.atomic():
+            # Lock both actor and target rows (ascending pk order avoids deadlocks).
+            ids = sorted({request.user.id, target.id})
+            locked = {u.id: u for u in User.objects.select_for_update().filter(pk__in=ids).order_by("pk")}
+            actor = locked.get(request.user.id)
+            locked_target = locked.get(target.id)
+
+            # Revalidate the actor is still a superadmin under the lock.
+            if actor is None or not is_super_admin(actor):
+                return danger.error(
+                    "Your superadmin access could not be verified.", "not_superadmin", status.HTTP_403_FORBIDDEN
+                )
+            if locked_target is None:
+                return danger.error("User not found (already deleted).", "not_found", status.HTTP_404_NOT_FOUND)
+
+            # Never leave the CRM with no admin-level user.
+            if locked_target.is_admin_role and active_admin_count(exclude_id=locked_target.id) == 0:
+                return danger.error(
+                    "You cannot delete the last remaining admin.", "last_admin", status.HTTP_409_CONFLICT
+                )
+
+            impact = self._ownership_impact(locked_target)
+            blockers = self._protect_blockers(impact)
+            if blockers:
+                return danger.error(
+                    "This user still owns protected records that must be reassigned first: "
+                    + ", ".join(blockers) + ".",
+                    "protected_dependencies",
+                    status.HTTP_409_CONFLICT,
+                )
+
+            deleted_id = locked_target.id
+            deleted_username = locked_target.username
+            # Delete. SET_NULL authorship is cleared, CASCADE work sessions/policy
+            # and AI confirmations are removed; no PROTECT reference remains.
+            locked_target.delete()
+
+            record_event(
+                action="user.permanently_deleted",
+                category=AuditCategory.USER,
+                user=request.user,
+                request=request,
+                entity_type="User",
+                entity_id=deleted_id,
+                summary=f"User #{deleted_id} '{deleted_username}' permanently deleted by superadmin.",
+                metadata={"impact": impact},
+            )
+
+        return Response(
+            {
+                "detail": "User permanently deleted.",
+                "deleted_user_id": deleted_id,
+                "impact": impact,
+            }
+        )

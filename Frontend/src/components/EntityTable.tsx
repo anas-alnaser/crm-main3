@@ -1,6 +1,7 @@
 import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { motion } from "framer-motion";
 import { Pencil, Trash2, Inbox } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "./ui/button";
 import { EmptyState } from "./ui/empty-state";
@@ -17,6 +18,9 @@ type EntityTableProps<T extends { id: number }> = {
   canDelete?: (row: T) => boolean;
   destructiveLabel?: string;
   confirmText?: string;
+  /** Optional extra per-row actions rendered after Edit/Delete (e.g. a
+   *  superadmin-only permanent delete). */
+  extraActions?: (row: T) => ReactNode;
 };
 
 export function EntityTable<T extends { id: number }>({
@@ -28,6 +32,7 @@ export function EntityTable<T extends { id: number }>({
   canDelete,
   destructiveLabel = "Delete",
   confirmText = "Delete this record?",
+  extraActions,
 }: EntityTableProps<T>) {
   const canRemove = canDelete ?? canModify;
   const table = useReactTable({
@@ -58,6 +63,7 @@ export function EntityTable<T extends { id: number }>({
                 {destructiveLabel}
               </Button>
             )}
+            {extraActions?.(row.original)}
           </div>
         ),
       },

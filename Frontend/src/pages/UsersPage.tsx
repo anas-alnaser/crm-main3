@@ -11,9 +11,12 @@ import { useForm } from "react-hook-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { apiRequest, createEntity, fetchList, patchEntity } from "../api/client";
-import type { User } from "../api/types";
+import { Trash2 } from "lucide-react";
+
+import { apiErrorMessage, apiRequest, createEntity, fetchList, patchEntity } from "../api/client";
+import type { User, UserDeleteImpact } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
+import { PermanentDeleteDialog, type PermanentDeleteConfirm } from "../components/PermanentDeleteDialog";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -21,6 +24,8 @@ import { MotionDiv, MotionSection, pageMotion } from "../components/ui/motion";
 import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/table";
+import { useAuth } from "../lib/auth";
+import { isSuperAdmin } from "../lib/superadmin";
 import { useToast } from "../lib/toast";
 
 const userSchema = z.object({
@@ -49,7 +54,10 @@ function RoleBadge({ role }: { role: User["role"] }) {
 export function UsersPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { user: currentUser } = useAuth();
+  const superadmin = isSuperAdmin(currentUser);
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
 
   const { data: users = [], isLoading, isError } = useQuery({
     queryKey: ["users"],
@@ -149,23 +157,37 @@ export function UsersPage() {
       {
         id: "actions",
         header: "",
-        cell: ({ row }) =>
-          row.original.is_active ? (
-            <div className="flex justify-end">
-              <Button className="h-8 px-3" type="button" variant="outline" onClick={() => deactivateUser.mutate(row.original.id)}>
-                Deactivate
-              </Button>
+        cell: ({ row }) => {
+          const isSelf = row.original.id === currentUser?.id;
+          return (
+            <div className="flex justify-end gap-2">
+              {row.original.is_active ? (
+                <Button className="h-8 px-3" type="button" variant="outline" onClick={() => deactivateUser.mutate(row.original.id)}>
+                  Deactivate
+                </Button>
+              ) : (
+                <Button className="h-8 px-3" type="button" onClick={() => reactivateUser.mutate(row.original.id)}>
+                  Reactivate
+                </Button>
+              )}
+              {/* Permanent delete: superadmin only, and never on your own row. */}
+              {superadmin && !isSelf && (
+                <Button
+                  className="h-8 px-3"
+                  type="button"
+                  variant="danger"
+                  onClick={() => setDeleteTarget(row.original)}
+                  aria-label={`Delete permanently ${row.original.username}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Delete permanently
+                </Button>
+              )}
             </div>
-          ) : (
-            <div className="flex justify-end">
-              <Button className="h-8 px-3" type="button" onClick={() => reactivateUser.mutate(row.original.id)}>
-                Reactivate
-              </Button>
-            </div>
-          ),
+          );
+        },
       },
     ],
-    [deactivateUser, reactivateUser, updateRole],
+    [currentUser?.id, superadmin, deactivateUser, reactivateUser, updateRole],
   );
 
   const table = useReactTable({
@@ -261,6 +283,88 @@ export function UsersPage() {
           </MotionDiv>
         </div>
       )}
+
+      {deleteTarget && (
+        <UserPermanentDeleteFlow
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            queryClient.invalidateQueries({ queryKey: ["users"] });
+            showToast("User permanently deleted.", "success");
+          }}
+          showToast={showToast}
+        />
+      )}
     </MotionSection>
+  );
+}
+
+function UserPermanentDeleteFlow({
+  target,
+  onClose,
+  onDeleted,
+  showToast,
+}: {
+  target: User;
+  onClose: () => void;
+  onDeleted: () => void;
+  showToast: (m: string, t?: "success" | "error" | "info") => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const impactQuery = useQuery({
+    queryKey: ["user-delete-impact", target.id],
+    queryFn: () => apiRequest<UserDeleteImpact>(`/users/${target.id}/delete-impact/`),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ password }: PermanentDeleteConfirm) =>
+      apiRequest(`/users/${target.id}/permanent-delete/`, {
+        method: "POST",
+        body: JSON.stringify({ current_password: password, confirmation: "DELETE USER", user_id: target.id }),
+      }),
+    onSuccess: () => onDeleted(),
+    onError: (err) => {
+      setError(apiErrorMessage(err, "Could not delete user."));
+      showToast(apiErrorMessage(err, "Could not delete user."), "error");
+    },
+  });
+
+  const impact = impactQuery.data;
+
+  return (
+    <PermanentDeleteDialog
+      open
+      title="Delete user permanently"
+      phrase="DELETE USER"
+      allowed={impact ? impact.deletion_allowed : false}
+      blockedReason={impact?.blocked_reason}
+      loadingImpact={impactQuery.isLoading}
+      submitLabel="Permanently delete user"
+      error={error}
+      submitting={deleteMutation.isPending}
+      onCancel={onClose}
+      onConfirm={(data) => {
+        setError(null);
+        deleteMutation.mutate(data);
+      }}
+    >
+      {impact ? (
+        <div className="rounded-md border border-border bg-muted/40 p-3">
+          <p className="font-medium">{impact.username}</p>
+          <p className="text-muted-foreground">Role: {impact.role}</p>
+          <p className="mt-1 text-muted-foreground">Owned records:</p>
+          <ul className="mt-1 grid grid-cols-2 gap-x-4">
+            <li>Deals: {String(impact.impact.owned_deals ?? 0)}</li>
+            <li>Meetings: {String(impact.impact.owned_meetings ?? 0)}</li>
+            <li>Work sessions: {String(impact.impact.work_sessions ?? 0)}</li>
+            <li>Created leads: {String(impact.impact.created_leads ?? 0)}</li>
+          </ul>
+        </div>
+      ) : impactQuery.isError ? (
+        <p className="text-red-500">{apiErrorMessage(impactQuery.error, "Could not load user impact.")}</p>
+      ) : null}
+    </PermanentDeleteDialog>
   );
 }

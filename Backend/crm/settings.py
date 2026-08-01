@@ -180,6 +180,8 @@ REST_FRAMEWORK = {
         "anon": env("THROTTLE_ANON", "100/hour"),
         "login": env("THROTTLE_LOGIN", "20/min"),
         "ai": env("THROTTLE_AI", "30/min"),
+        # Irreversible superadmin endpoints (permanent delete + full reset).
+        "danger": env("THROTTLE_DANGER", "40/min"),
     },
 }
 

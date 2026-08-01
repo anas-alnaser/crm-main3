@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiRequest, fetchList } from "../api/client";
 import type { CommissionSummary, Pipeline, Stage } from "../api/types";
 import { PageHeader } from "../components/PageHeader";
+import { SettingsDangerZone } from "../components/SettingsDangerZone";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -100,6 +101,8 @@ export function SettingsPage() {
             ))}
           </div>
         </section>
+
+        <SettingsDangerZone />
       </div>
     </MotionSection>
   );

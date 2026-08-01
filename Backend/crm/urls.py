@@ -21,6 +21,7 @@ from branding.views import (
     SignatoryViewSet,
 )
 from clients.views import ClientViewSet
+from crm.reset_views import DataResetExecuteView, DataResetPreviewView
 from crm.views import DashboardStatsView, GlobalSearchView, HealthView, serve_stored_media
 from leads.views import LeadImportBatchViewSet, LeadViewSet
 from meetings.views import MeetingViewSet
@@ -93,6 +94,9 @@ urlpatterns = [
     path("api/workforce/employees/", WorkforceEmployeesView.as_view(), name="workforce_employees"),
     # Audit telemetry
     path("api/telemetry/", FrontendTelemetryView.as_view(), name="frontend_telemetry"),
+    # Full CRM reset (superadmin only; preview-gated + rate-limited).
+    path("api/admin/data-reset/preview/", DataResetPreviewView.as_view(), name="data_reset_preview"),
+    path("api/admin/data-reset/execute/", DataResetExecuteView.as_view(), name="data_reset_execute"),
     # Internal: closed-loop work-session reconciliation. Called once a minute by
     # Google Cloud Scheduler with a verified OIDC token; not part of the public
     # API and never invokable by users, admins, or anonymous callers.

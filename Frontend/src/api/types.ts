@@ -5,8 +5,64 @@ export type User = {
   first_name: string;
   last_name: string;
   is_staff: boolean;
+  is_superuser: boolean;
   is_active: boolean;
   role: "admin" | "sales";
+};
+
+// --- Danger zone: permanent delete + full reset ---
+export type LeadDeleteImpact = {
+  lead_id: number;
+  name: string;
+  status: LeadStatus;
+  status_display: string;
+  is_converted: boolean;
+  contact_attempt_count: number;
+  deletion_allowed: boolean;
+  blocked_reason: string | null;
+  confirmation_phrase: string;
+};
+
+export type CompanyDeleteImpact = {
+  client_id: number;
+  name: string;
+  is_archived: boolean;
+  impact: {
+    deals: number;
+    projects: number;
+    tasks: number;
+    activities: number;
+    meetings: number;
+    documents: number;
+    converted_leads: number;
+  };
+  cascade_delete_count: number;
+  dependencies_exist: boolean;
+  confirmation_phrase: string;
+};
+
+export type UserDeleteImpact = {
+  user_id: number;
+  username: string;
+  role: "admin" | "sales";
+  is_active: boolean;
+  is_self: boolean;
+  impact: Record<string, number | boolean>;
+  protect_blockers: string[];
+  deletion_allowed: boolean;
+  blocked_reason: string | null;
+  confirmation_phrase: string;
+};
+
+export type ResetPreview = {
+  preserved_user: { id: number; username: string; email: string };
+  counts: Record<string, number>;
+  other_users_to_delete: number;
+  total_rows: number;
+  preserved_config: { legal_entities: string[]; brands: string[] };
+  preview_token: string;
+  preview_expires_at: string;
+  confirmation_phrase: string;
 };
 
 export type Pipeline = {

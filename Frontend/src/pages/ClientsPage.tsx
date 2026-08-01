@@ -5,9 +5,12 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { apiRequest, fetchList } from "../api/client";
+import { Trash2 } from "lucide-react";
+
+import { apiErrorMessage, apiRequest, fetchList } from "../api/client";
 import { EntityTable } from "../components/EntityTable";
 import { PageHeader } from "../components/PageHeader";
+import { PermanentDeleteDialog, type PermanentDeleteConfirm } from "../components/PermanentDeleteDialog";
 import { Badge, statusTone } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -16,9 +19,10 @@ import { Select } from "../components/ui/select";
 import { TableSkeleton } from "../components/ui/skeleton";
 import { Textarea } from "../components/ui/textarea";
 import { useAuth } from "../lib/auth";
+import { isSuperAdmin } from "../lib/superadmin";
 import { useToast } from "../lib/toast";
 import { useCrud } from "../hooks/useCrud";
-import type { Client } from "../api/types";
+import type { Client, CompanyDeleteImpact } from "../api/types";
 
 const schema = z.object({
   name: z.string().min(1, "Business name is required"),
@@ -58,7 +62,9 @@ export function ClientsPage() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const isAdmin = user?.role === "admin";
+  const superadmin = isSuperAdmin(user);
   const [editing, setEditing] = useState<Client | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Client | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const { data = [], isLoading, createMutation, updateMutation } = useCrud<Client>("clients");
   const archivedQuery = useQuery({
@@ -104,6 +110,21 @@ export function ClientsPage() {
   const canModify = (client: Client) => isAdmin || client.created_by === user?.id;
   const rows = showArchived ? archivedQuery.data ?? [] : data;
   const loading = showArchived ? archivedQuery.isLoading : isLoading;
+
+  // Archive/Restore stay the default for everyone; only a superadmin sees the
+  // irreversible Permanent delete action.
+  const permanentDeleteAction = superadmin
+    ? (client: Client) => (
+        <Button
+          variant="danger"
+          className="h-8 px-3"
+          onClick={() => setDeleteTarget(client)}
+          aria-label={`Delete permanently ${client.name}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" /> Delete permanently
+        </Button>
+      )
+    : undefined;
 
   return (
     <MotionSection className="page-shell" {...pageMotion}>
@@ -153,6 +174,7 @@ export function ClientsPage() {
               canDelete={() => isAdmin}
               destructiveLabel="Restore"
               confirmText="Restore this company to the active list?"
+              extraActions={permanentDeleteAction}
             />
           ) : (
             <EntityTable
@@ -164,10 +186,104 @@ export function ClientsPage() {
               canDelete={() => isAdmin}
               destructiveLabel="Archive"
               confirmText="Archive this company? Its deals and projects are preserved and it is hidden from active lists."
+              extraActions={permanentDeleteAction}
             />
           )}
         </div>
       </div>
+
+      {deleteTarget && (
+        <CompanyPermanentDeleteFlow
+          company={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            queryClient.invalidateQueries({ queryKey: ["clients"] });
+            showToast("Company permanently deleted.", "success");
+          }}
+          showToast={showToast}
+        />
+      )}
     </MotionSection>
+  );
+}
+
+function CompanyPermanentDeleteFlow({
+  company,
+  onClose,
+  onDeleted,
+  showToast,
+}: {
+  company: Client;
+  onClose: () => void;
+  onDeleted: () => void;
+  showToast: (m: string, t?: "success" | "error" | "info") => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  const impactQuery = useQuery({
+    queryKey: ["client-delete-impact", company.id],
+    queryFn: () => apiRequest<CompanyDeleteImpact>(`/clients/${company.id}/delete-impact/`),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: ({ password, cascadeConfirmed }: PermanentDeleteConfirm) =>
+      apiRequest(`/clients/${company.id}/permanent-delete/`, {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: password,
+          confirmation: "DELETE COMPANY",
+          client_id: company.id,
+          cascade_confirmed: cascadeConfirmed,
+        }),
+      }),
+    onSuccess: () => onDeleted(),
+    onError: (err) => {
+      setError(apiErrorMessage(err, "Could not delete company."));
+      showToast(apiErrorMessage(err, "Could not delete company."), "error");
+    },
+  });
+
+  const impact = impactQuery.data;
+
+  return (
+    <PermanentDeleteDialog
+      open
+      title="Delete company permanently"
+      phrase="DELETE COMPANY"
+      allowed={Boolean(impact)}
+      loadingImpact={impactQuery.isLoading}
+      cascadeLabel={
+        impact?.dependencies_exist
+          ? "I understand its deals and projects will also be permanently deleted."
+          : undefined
+      }
+      submitLabel="Permanently delete company"
+      error={error}
+      submitting={deleteMutation.isPending}
+      onCancel={onClose}
+      onConfirm={(data) => {
+        setError(null);
+        deleteMutation.mutate(data);
+      }}
+    >
+      {impact ? (
+        <div className="rounded-md border border-border bg-muted/40 p-3">
+          <p className="font-medium">{impact.name}</p>
+          <p className="mt-1 text-muted-foreground">Related records:</p>
+          <ul className="mt-1 grid grid-cols-2 gap-x-4">
+            <li>Deals: {impact.impact.deals} <span className="text-xs text-red-500">(deleted)</span></li>
+            <li>Projects: {impact.impact.projects} <span className="text-xs text-red-500">(deleted)</span></li>
+            <li>Tasks: {impact.impact.tasks}</li>
+            <li>Activities: {impact.impact.activities}</li>
+            <li>Meetings: {impact.impact.meetings}</li>
+            <li>Documents: {impact.impact.documents}</li>
+            <li>Converted leads: {impact.impact.converted_leads}</li>
+          </ul>
+        </div>
+      ) : impactQuery.isError ? (
+        <p className="text-red-500">{apiErrorMessage(impactQuery.error, "Could not load company impact.")}</p>
+      ) : null}
+    </PermanentDeleteDialog>
   );
 }

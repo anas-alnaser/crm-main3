@@ -57,6 +57,47 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   return response.json() as Promise<T>;
 }
 
+/**
+ * Extract a safe, human-readable message from a thrown API error.
+ *
+ * `apiRequest` throws `Error(responseBodyText)`; backend error bodies are JSON
+ * like `{ "detail": "...", "code": "..." }` (or a per-field validation map). This
+ * surfaces the backend's own safe message instead of a generic frontend string,
+ * without ever exposing stack traces, SQL, or secrets.
+ */
+export function apiErrorMessage(error: unknown, fallback = "Something went wrong."): string {
+  if (!(error instanceof Error) || !error.message) return fallback;
+  const raw = error.message;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.detail === "string") return obj.detail;
+      // Per-field validation errors: surface the first field's first message.
+      for (const value of Object.values(obj)) {
+        if (typeof value === "string") return value;
+        if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+      }
+    }
+  } catch {
+    // Not JSON — fall through. Avoid dumping long/opaque bodies.
+    if (raw.length <= 200 && !raw.trim().startsWith("<")) return raw;
+  }
+  return fallback;
+}
+
+/** Read the machine-readable `code` slug from an API error body, if present. */
+export function apiErrorCode(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message) return null;
+  try {
+    const parsed = JSON.parse(error.message) as Record<string, unknown>;
+    return typeof parsed.code === "string" ? parsed.code : null;
+  } catch {
+    return null;
+  }
+}
+
 export function login(username: string, password: string) {
   return apiRequest<LoginResponse>("/auth/token/", {
     method: "POST",

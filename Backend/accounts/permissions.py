@@ -1,6 +1,37 @@
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
+def is_super_admin(user) -> bool:
+    """The single, strict definition of a *superadmin*.
+
+    A superadmin is the trusted account allowed to perform irreversible,
+    destructive operations (permanent record deletion and the full CRM reset).
+    This is deliberately stricter than :attr:`User.is_admin_role`: a normal
+    ``role="admin"`` staff user is NOT a superadmin. All five conditions must
+    hold — authenticated, active, staff, Django superuser, and CRM admin role.
+    """
+    return bool(
+        user
+        and user.is_authenticated
+        and user.is_active
+        and user.is_staff
+        and user.is_superuser
+        and getattr(user, "role", None) == "admin"
+    )
+
+
+class IsSuperAdmin(BasePermission):
+    """Gate for irreversible, superadmin-only endpoints (permanent delete, reset).
+
+    Frontend visibility is never sufficient — every destructive endpoint enforces
+    this on the server. See :func:`is_super_admin` for the exact definition."""
+
+    message = "Only a superadmin can perform this action."
+
+    def has_permission(self, request, view):
+        return is_super_admin(request.user)
+
+
 class IsAdminRole(BasePermission):
     def has_permission(self, request, view):
         return bool(request.user and request.user.is_authenticated and request.user.is_admin_role)
